@@ -1,0 +1,18 @@
+import:
+  zsh: zsh/dotfiles.yaml
+  alacritty: alacritty/dotfiles.yaml
+dotfiles:
+  - source: config/alacritty
+    target: !eval "{{ paths.config }}/alacritty"
+    kind: template
+properties:
+  package_managers:
+    arch: paru
+    winget: winget.exe
+  paths:
+    # c-01
+    config: !eval |-
+      {{ env('XDG_CONFIG_HOME', '~/.config') | abspath }}
+    # c-03
+    home: !eval |
+      {{ env('HOME', '~') | abspath }}

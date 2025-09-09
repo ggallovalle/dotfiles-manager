@@ -1,0 +1,18 @@
+import:
+  zsh: zsh/dotfiles.yaml
+  alacritty: alacritty/dotfiles.yaml
+dotfiles:
+- source: config/alacritty
+  target: "/home/kbroom/.config/alacritty"
+  kind: template
+properties:
+  package_managers:
+    arch: paru
+    winget: winget.exe
+  paths:
+    # c-01
+    config: |-
+      /home/kbroom/.config
+    # c-03
+    home: |
+      /home/kbroom

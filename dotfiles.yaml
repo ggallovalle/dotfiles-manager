@@ -1,0 +1,23 @@
+# programs to be installed
+dependencies:
+  - command: alacritty # terminal emulator
+    version: '>=0.15.0'
+    repo:  https://github.com/alacritty/alacritty 
+    docs: https://alacritty.org/config-alacritty.html
+    package:
+      cargo: alacritty
+      arch: alacritty
+      winget: Alacritty.Alacritty
+      chocolatey: alacritty
+      brew:
+        id: alacritty
+        cask: true
+dotfiles:
+  - source: config/alacritty
+    # c-1
+    target: !eval |
+      {{ paths.config }}/alacritty # c-2
+    # target: '{{ paths.config }}/alacritty' # c-2
+    # target: !!str 1020
+    kind: template
+    # c-3

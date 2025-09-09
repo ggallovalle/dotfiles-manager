@@ -1,0 +1,28 @@
+dependencies: list(include('dependencie'))
+dotfiles: list(include('dotfile'))
+
+---
+dotfile:
+  source: str()
+  target: str()
+  kind: enum('symlink', 'copy', 'template', required=False)
+dependencie:
+  command: str()
+  version: str() # imrove to a semver pattern
+  repo: str()
+  docs: str()
+  package:
+    cargo: include('cargo')
+    arch: include('arch')
+    chocolatey: include('chocolatey')
+    winget: include('winget')
+    brew: include('brew')
+cargo: str(required=False)
+arch: str(required=False)
+chocolatey: str(required=False)
+winget: str(required=False)
+brew: any(include('brew_full'), include('brew_simple'), required=False)
+brew_full:
+  id: str()
+  cask: bool(required=False)
+brew_simple: str()
