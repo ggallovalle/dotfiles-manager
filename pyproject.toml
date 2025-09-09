@@ -19,3 +19,9 @@ dotfiles-manager = "dotfiles_manager:main"
 [build-system]
 requires = ["uv_build>=0.8.15,<0.9.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-xdist>=3.8.0",
+]
