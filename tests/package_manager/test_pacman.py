@@ -5,6 +5,8 @@ from dotfiles_manager.package_manager.pacman import PacmanManager
 from dotfiles_manager.package_manager.interface import (
     PackageNotFound,
     PackageManagerNotFound,
+    PackageInstallBunchError,
+    PackageSpec
 )
 
 
@@ -58,3 +60,30 @@ def test_versions_nonexistent_package_paru(paru_available):
     manager = PacmanManager(command="paru")
     with pytest.raises(PackageNotFound):
         manager.versions("thispackagedoesnotexist12345")
+
+
+def test_install_bundle_all_fail(pacman_available):
+    if not pacman_available:
+        pytest.skip("pacman is not installed")
+    manager = PacmanManager()
+    bundle = ["thispackagedoesnotexist12345", PackageSpec("anotherfakepkg98765")]
+    with pytest.raises(PackageInstallBunchError) as excinfo:
+        manager.install(bundle)
+    e = excinfo.value
+    failed_ids = [s if isinstance(s, str) else getattr(s, "id", None) for s in e.specs]
+    assert "thispackagedoesnotexist12345" in failed_ids
+    assert "anotherfakepkg98765" in failed_ids
+
+
+def test_install_bundle_one_fail_one_success(pacman_available):
+    if not pacman_available:
+        pytest.skip("pacman is not installed")
+    manager = PacmanManager()
+    bundle = [PackageSpec("bash"), "thispackagedoesnotexist12345"]
+    with pytest.raises(PackageInstallBunchError) as excinfo:
+        manager.install(bundle)
+    e = excinfo.value
+    failed_ids = [s if isinstance(s, str) else getattr(s, "id", None) for s in e.specs]
+    assert "thispackagedoesnotexist12345" in failed_ids
+    # Only failed ids are available; bash should not be in failed_ids
+    assert "bash" not in failed_ids
