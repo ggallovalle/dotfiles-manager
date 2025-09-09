@@ -1,10 +1,12 @@
 from typing import Protocol
 
 
+from semantic_version import Version
+
 class PackageManager(Protocol):
     id: str
 
-    def versions(self, package: str) -> list[str]: ...
+    def versions(self, package: str) -> list[Version]: ...
 
 
 class PackageNotFound(Exception):

@@ -1,5 +1,6 @@
 import pytest
 import shutil
+from semantic_version import Version
 from dotfiles_manager.package_manager.pacman import PacmanManager
 from dotfiles_manager.package_manager.interface import (
     PackageNotFound,
@@ -30,7 +31,7 @@ def test_versions_existing_package(pacman_available):
     versions = manager.versions("bash")  # 'bash' is almost always present
     assert isinstance(versions, list)
     assert versions
-    assert all(isinstance(v, str) for v in versions)
+    assert all(isinstance(v, Version) for v in versions)
 
 
 def test_versions_existing_package_paru(paru_available):
@@ -40,7 +41,7 @@ def test_versions_existing_package_paru(paru_available):
     versions = manager.versions("bash")
     assert isinstance(versions, list)
     assert versions
-    assert all(isinstance(v, str) for v in versions)
+    assert all(isinstance(v, Version) for v in versions)
 
 
 def test_versions_nonexistent_package(pacman_available):

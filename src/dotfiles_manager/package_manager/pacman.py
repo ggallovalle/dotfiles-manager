@@ -1,6 +1,7 @@
 
 import subprocess
 from typing import List
+from semantic_version import Version
 from .interface import PackageManager, PackageNotFound, PackageManagerNotFound
 
 
@@ -9,7 +10,7 @@ class PackageManagerHelper:
     def __init__(self, command: str = "pacman"):
         self.command = command
 
-    def run_versions(self, package: str) -> List[str]:
+    def run_versions(self, package: str) -> List[Version]:
         try:
             result = subprocess.run([
                 self.command, "-Si", package
@@ -17,7 +18,12 @@ class PackageManagerHelper:
             versions = []
             for line in result.stdout.splitlines():
                 if line.startswith("Version"):
-                    versions.append(line.split(":", 1)[1].strip())
+                    version_str = line.split(":", 1)[1].strip()
+                    try:
+                        versions.append(Version(version_str))
+                    except ValueError:
+                        # If version string is not valid, skip it
+                        continue
             return versions
         except FileNotFoundError:
             raise PackageManagerNotFound(self.command)
@@ -35,7 +41,7 @@ class PacmanManager(PackageManager):
     def __init__(self, command: str = "pacman"):
         self.helper = PackageManagerHelper(command)
 
-    def versions(self, package: str) -> List[str]:
+    def versions(self, package: str) -> List[Version]:
         versions = self.helper.run_versions(package)
         if not versions:
             raise PackageNotFound(package, self.id)
