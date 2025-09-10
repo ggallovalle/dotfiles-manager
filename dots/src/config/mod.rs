@@ -1,4 +1,5 @@
-pub mod root;
 pub mod bundle;
+pub mod env;
+pub mod root;
 
-pub use root::RootConfig;
+pub use root::Config;
