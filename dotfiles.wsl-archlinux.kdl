@@ -1,7 +1,7 @@
 dotfiles_dir "${HOME}/dotfiles"
-// I don't need this, can resolve it from environment
 package_manager "paru" "cargo"
 
+env ZDOTDIR inherit=#true
 env ZDOTDIR="${XDG_CONFIG_HOME}/zsh"
 
 bundle "zsh" {

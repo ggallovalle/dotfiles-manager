@@ -1,6 +1,6 @@
 // bundle module for config
-use semver;
 use crate::config::root::PackageManager;
+use semver;
 use std::path::PathBuf;
 
 pub fn example_bundle() {
@@ -32,7 +32,7 @@ pub struct Dotfile {
 #[derive(Debug, Clone)]
 pub enum DotfileSource {
     // Git(String), TODO
-    Local(PathBuf)
+    Local(PathBuf),
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +63,5 @@ pub enum ShellRc {
 pub enum ShellPosition {
     Start,
     End,
-    Random
+    Random,
 }
-

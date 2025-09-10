@@ -44,7 +44,7 @@ impl PackageManager {
 }
 
 impl FromStr for PackageManager {
-    type Err = ();
+    type Err = Vec<&'static str>;
 
     fn from_str(input: &str) -> Result<PackageManager, Self::Err> {
         match input.to_lowercase().as_str() {
@@ -56,7 +56,7 @@ impl FromStr for PackageManager {
             "choco" => Ok(PackageManager::WindowsChoco),
             "winget" => Ok(PackageManager::WindowsWinget),
             "cargo" => Ok(PackageManager::RustCargo),
-            _ => Err(()),
+            _ => Err(vec!["pacman", "yay", "paru", "apt", "brew", "choco", "winget", "cargo"]),
         }
     }
 }
@@ -78,7 +78,7 @@ impl ToString for PackageManager {
 }
 
 impl Options {
-    fn create(dotfiles_dir: PathBuf) -> Self {
+    pub fn create(dotfiles_dir: PathBuf) -> Self {
         Options { dotfiles_dir, package_manager: Options::resolve_system_package_manager() }
     }
 
