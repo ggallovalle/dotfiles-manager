@@ -1,0 +1,42 @@
+package_manager "paru" "winget"
+
+dependencies {
+    // dependencie full declaration
+    alacritty ">=0.15.0" {
+        repo "https://github.com/alacritty/alacritty"
+        docs "https://alacritty.org/config-alacritty.html"
+        package {
+            winget "Alacritty.Alacritty" 
+            brew cask=#true
+        }
+    }
+    zsh ">=5.0.0"
+    // implies latest version
+    starship {
+        repo https://github.com/starship/starship
+        docs https://starship.rs/guide/
+    }
+}
+
+dotfiles {
+    zshrc "zsh/home/dot_zshrc"
+    zshenv "zsh/home/dot_zshenv" template=#true
+
+    config "alacritty" "alacritty/config/alacritty"
+    
+    config "starship" "starship/config/starship" template=#true {
+        zshrc position=end #"""
+        eval "$(starship init zsh)"
+        """#
+        bashrc position=end #"""
+        eval "$(starship init bash)"
+        """#
+    }
+}
+
+vars {
+    paths {
+        home (eval) "{{ env('XDG_CONFIG_HOME', '~/.config') | abspath }}"
+        config (eval) "{{ env('HOME', '~') | abspath }}"
+    }
+}

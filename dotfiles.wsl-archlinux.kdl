@@ -1,0 +1,64 @@
+dotfiles_dir "${HOME}/dotfiles"
+package_manager "paru"
+
+env XDG_CACHE_HOME="${HOME}/.cache"
+env XDG_CONFIG_HOME="${HOME}/.config"
+env XDG_DATA_HOME="${HOME}/.local/share"
+env XDG_CACHE_HOME="${HOME}/.cache"
+env ZDOTDIR="${XDG_CONFIG_HOME}/zsh"
+
+bundle "zsh" {
+    dependencies {
+        zsh
+    }
+    dotfiles {
+        cp "zsh/home/dot_zshrc" "${ZDOTDIR}/.zshr"
+        cp "zsh/home/dot_zshenv" "${ZDOTDIR}/.zshenv"
+    }
+}
+
+bundle "shell-pretty" {
+    dependencies {
+        starship
+        lsd
+    }
+    dotfiles {
+        config "starship" "starship/config/starship" {
+            zshrc position=end #"""
+            eval "$(starship init zsh)"
+            """#
+            bashrc position=end #"""
+            eval "$(starship init bash)"
+            """#
+        }
+
+        config "lsd" "lsd/config/lsd" {
+            alias ls="lsd --group-directories-first"
+            alias ll="lsd -l --group-directories-first --header"
+            alias la="lsd -l --group-directories-first"
+            alias ld="lsd -d"
+            alias lt="lsd --tree --depth 3"
+            alias lla="lsd -lA --group-directories-first --header"
+        }
+    }
+}
+
+bundle "terminal-emulator" {
+    dependencies { 
+        alacritty 
+        kitty
+    }
+    dotfiles {
+        config "alacritty" "alacritty/config/alacritty"
+        config "kitty" "kitty/config/kitty"
+    }
+}
+
+bundle "neovim" {
+    dependencies { 
+        neovim 
+    }
+    dotfiles {
+        config "nvim" "git@github.com:ggallovalle/dotfiles.git"
+    }
+}
