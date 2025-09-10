@@ -119,7 +119,6 @@ impl Options {
     }
 }
 
-
 impl Default for Config {
     fn default() -> Self {
         let mut env = IndexMap::new();
