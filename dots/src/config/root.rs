@@ -12,6 +12,18 @@ pub fn example_root() {
     println!("This is the root config module");
 }
 
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub env: EnvironmentVariables,
+    pub options: Options,
+}
+
+#[derive(Debug, Clone)]
+pub struct Options {
+    pub dotfiles_dir: PathBuf,
+    pub package_manager: IndexMap<PackageManager, PathBuf>,
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum PackageManager {
     ArchPacman,
@@ -22,6 +34,13 @@ pub enum PackageManager {
     WindowsChoco,
     WindowsWinget,
     RustCargo,
+}
+
+impl PackageManager {
+    pub fn which(&self) -> Option<PathBuf> {
+        let command = self.to_string();
+        which(command).ok()
+    }
 }
 
 impl FromStr for PackageManager {
@@ -58,12 +77,6 @@ impl ToString for PackageManager {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Options {
-    pub dotfiles_dir: PathBuf,
-    pub package_manager: IndexMap<PackageManager, PathBuf>,
-}
-
 impl Options {
     fn create(dotfiles_dir: PathBuf) -> Self {
         Options { dotfiles_dir, package_manager: Options::resolve_system_package_manager() }
@@ -71,55 +84,41 @@ impl Options {
 
     fn resolve_system_package_manager() -> IndexMap<PackageManager, PathBuf> {
         let mut managers = IndexMap::new();
+        macro_rules! pkg {
+            ( $package:expr) => {
+                if let Some(path) = $package.which() {
+                    managers.insert($package, path);
+                }
+            };
+        }
         #[cfg(target_os = "windows")]
         {
-            if let Ok(path) = which("choco") {
-                managers.insert(PackageManager::WindowsChoco, path);
-            }
-            if let Ok(path) = which("winget") {
-                managers.insert(PackageManager::WindowsWinget, path);
-            }
+            pkg!(PackageManager::WindowsChoco);
+            pkg!(PackageManager::WindowsWinget);
         }
 
         #[cfg(target_os = "linux")]
         {
             // archlinux
-            if let Ok(path) = which("yay") {
-                managers.insert(PackageManager::ArchYay, path);
-            }
-            if let Ok(path) = which("paru") {
-                managers.insert(PackageManager::ArchParu, path);
-            }
-            if let Ok(path) = which("pacman") {
-                managers.insert(PackageManager::ArchPacman, path);
-            }
+            pkg!(PackageManager::ArchYay);
+            pkg!(PackageManager::ArchParu);
+            pkg!(PackageManager::ArchPacman);
             // debian/ubuntu
-            if let Ok(path) = which("apt") {
-                managers.insert(PackageManager::DebianApt, path);
-            }
+            pkg!(PackageManager::DebianApt);
         }
 
         #[cfg(target_os = "macos")]
         {
             // macOS
-            if let Ok(path) = which("brew") {
-                managers.insert(PackageManager::MacBrew, path);
-            }
+            pkg!(PackageManager::MacBrew);
         }
 
-        if let Ok(path) = which("cargo") {
-            managers.insert(PackageManager::RustCargo, path);
-        }
+        pkg!(PackageManager::RustCargo);
 
         managers
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Config {
-    pub env: EnvironmentVariables,
-    pub options: Options,
-}
 
 impl Default for Config {
     fn default() -> Self {
