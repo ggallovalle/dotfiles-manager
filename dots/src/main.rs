@@ -6,11 +6,14 @@ use miette;
 fn main() -> miette::Result<()> {
     let mut root_config = config::Config::default();
     let kdl_str = r#"
-    env GIBRISH inherit=#true
+    // env GIBRISH inherit="true" // error: invalid type
+    // env GIBRISH inherit=(time)"true" // error: invalid type
+    // env HOME inherit="true" // error: invalid type
     env GIBRISH_1 inherit=#false
-    env HOME inherit="true" // error: inherit must be boolean
     env PLAIN inherit=#false
     env KEY1 "value1"
+    // env #true "value"
+    env (time)"10:20" "value"
     env KEY2 "${KEY1}_suffix"
     env KEY3="${KEY2}_more"
     env KEY4="${GIBRISH}_extended"

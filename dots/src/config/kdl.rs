@@ -3,14 +3,14 @@ use crate::config::root::Options;
 use crate::config::root::PackageManager;
 use std::{fmt::Display, path::PathBuf};
 
-use miette::{Diagnostic, LabeledSpan, NamedSource, SourceCode};
+use miette::{Diagnostic, LabeledSpan, NamedSource, SourceCode, self};
 use thiserror::Error;
 
 #[derive(Debug, Error, Diagnostic, Clone)]
 pub enum ConfigError {
     #[error("Deserialization error: {0}")]
     KdlDeserializationError(#[from] kdl::KdlError),
-    #[error("KdlDeserialization error: {0}")]
+    #[error("kdl deserialization error: {0}")]
     #[diagnostic(transparent)]
     KdlError(KdlError), // TODO: consolidate these
 }
@@ -48,7 +48,7 @@ pub struct KdlError {
 
 impl Display for KdlError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "Failed to parse Dots configuration")
+        write!(f, "failed to parse Dots configuration")
     }
 }
 
@@ -66,7 +66,7 @@ impl Diagnostic for KdlError {
 
     fn url<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
         Some(Box::new(
-            "https://github.com/ggallovalle/blob/main/dotfiles-manager/documentation/configuraton.md",
+            "https://github.com/ggallovalle/dotfiles-manager/blob/main/documentation/configuration.md",
         ))
     }
 
@@ -108,46 +108,45 @@ macro_rules! kdl_node_required {
     };
 }
 
-macro_rules! kdl_node_first_arg_as_string_or_error {
-    ( $kdl_node:expr, $property_name:expr ) => {{
-        match $kdl_node.get($property_name) {
-            None => None,
-            Some(node) => kdl_entry_string_or_error!(node, 0),
-        }
-    }};
+macro_rules! kdl_error_invalid_type {
+    ( $kdl_entry:expr, $type:expr ) => {
+        kdl_parsing_error!(
+            format!(
+                "invalid type: {}, expected: {}",
+                match $kdl_entry.ty() {
+                    None => match $kdl_entry.value() {
+                        kdl::KdlValue::String(_) => "string",
+                        kdl::KdlValue::Integer(_) => "int",
+                        kdl::KdlValue::Float(_) => "float",
+                        kdl::KdlValue::Bool(_) => "bool",
+                        kdl::KdlValue::Null => "null",
+                    },
+                    Some(identifier) => identifier.value(),
+                },
+                $type
+            ),
+            $kdl_entry
+        )
+    };
 }
 
 macro_rules! kdl_entry_key_value_or_error {
     ( $node:expr ) => {{
         let mut entries = $node.entries().iter();
-        let node_name = $node.name().value();
         match entries.next() {
-            None => {
-                None
-                // return Err(kdl_parsing_error!(
-                //     format!("node {} must have a key and a value", node_name),
-                //     $node
-                // ));
-            }
+            None => None,
             Some(key_entry) => match key_entry.name() {
                 Some(name) => Some((name.value(), key_entry.value(), key_entry)),
                 None => match entries.next() {
-                    None => {
-                        None
-                        // return Err(kdl_parsing_error!(
-                        //     format!("node {} must have a key and a value", node_name),
-                        //     $node
-                        // ));
-                    }
-                    Some(value_entry) => {
-                        if !key_entry.value().is_string() {
-                            return Err(kdl_parsing_error!(
-                                format!("node {} must have a string key", node_name),
-                                key_entry
-                            ));
-                        }
+                    None => None,
+                    Some(value_entry)
+                        if key_entry.value().is_string() && key_entry.ty().is_none() =>
+                    {
                         let key = key_entry.value().as_string().unwrap();
                         Some((key, value_entry.value(), value_entry))
+                    }
+                    _ => {
+                        return Err(kdl_error_invalid_type!(key_entry, "string"));
                     }
                 },
             },
@@ -162,113 +161,124 @@ macro_rules! kdl_entry_key_value_string_or_error {
             Some((key, value, value_entry)) => match value {
                 kdl::KdlValue::String(string_value) => Some((key, string_value, value_entry)),
                 _ => {
-                    return Err(kdl_parsing_error!(
-                        format!(
-                            "the value in node {} with key {} must be a string",
-                            $node.name().value(),
-                            key
-                        ),
-                        $node
-                    ));
+                    return Err(kdl_error_invalid_type!(value_entry, "string"));
                 }
             },
         }
     };
 }
 
-macro_rules! kdl_entry_string_or_error {
-    ( $kdl_node:expr, $entry:expr ) => {{
-        {
-            let node_key: kdl::NodeKey = $entry.into();
-            let entry_type = match node_key {
-                kdl::NodeKey::Index(_) => "argument",
-                kdl::NodeKey::Key(_) => "property",
-            };
-            match $kdl_node.entry(node_key) {
-                None => None,
-                Some(entry) => match entry.value().as_string() {
-                    None => {
-                        return Err(kdl_parsing_error!(
-                            format!(
-                                "node {} {} {} must be a string",
-                                $kdl_node.name().value(),
-                                entry_type,
-                                $entry
-                            ),
-                            entry
-                        ));
-                    }
-                    Some(string_value) => Some((string_value, entry)),
-                },
-            }
-        }
-    }};
+trait KdlEntryExtract: Sized {
+    const TYPE_NAME: &'static str;
+    fn extract(entry: &kdl::KdlEntry) -> Option<Self>;
 }
 
-macro_rules! kdl_entry_string {
-    ( $kdl_node:expr, $entry:expr ) => {{
-        {
-            let node_key: kdl::NodeKey = $entry.into();
-            match $kdl_node.entry(node_key) {
-                None => None,
-                Some(entry) => match entry.value().as_string() {
-                    None => None,
-                    Some(string_value) => Some((string_value, entry)),
-                },
-            }
+impl KdlEntryExtract for String {
+    const TYPE_NAME: &'static str = "string";
+    fn extract(entry: &kdl::KdlEntry) -> Option<Self> {
+        if entry.ty().is_some() {
+            return None;
         }
-    }};
+        entry.value().as_string().map(|s| s.to_owned())
+    }
 }
 
-macro_rules! kdl_entry_bool_or_error {
-    ( $kdl_node:expr, $entry:expr ) => {{
-        {
-            let node_key: kdl::NodeKey = $entry.into();
-            let entry_type = match node_key {
-                kdl::NodeKey::Index(_) => "argument",
-                kdl::NodeKey::Key(_) => "property",
-            };
-            match $kdl_node.entry(node_key) {
-                None => None,
-                Some(entry) => match entry.value().as_bool() {
-                    None => {
-                        return Err(kdl_parsing_error!(
-                            format!(
-                                "node {} entry {} {} must be a boolean",
-                                $kdl_node.name().value(),
-                                entry_type,
-                                $entry
-                            ),
-                            entry
-                        ));
-                    }
-                    Some(bool_value) => Some((bool_value, entry)),
-                },
-            }
+impl KdlEntryExtract for bool {
+    const TYPE_NAME: &'static str = "bool";
+    fn extract(entry: &kdl::KdlEntry) -> Option<Self> {
+        if entry.ty().is_some() {
+            return None;
         }
-    }};
+        entry.value().as_bool()
+    }
 }
 
-macro_rules! kdl_entry_bool {
-    ( $kdl_node:expr, $entry:expr ) => {{
-        {
-            let node_key: kdl::NodeKey = $entry.into();
-            match $kdl_node.entry(node_key) {
-                None => None,
-                Some(entry) => match entry.value().as_bool() {
-                    None => None,
-                    Some(bool_value) => Some((bool_value, entry)),
-                },
+trait KdlNodeExt {
+    fn get_entry_as<T: KdlEntryExtract>(
+        &self,
+        key: impl Into<kdl::NodeKey>,
+    ) -> Result<T, ConfigError>;
+    fn get_entry_arg_as<T: KdlEntryExtract>(&self, index: usize) -> Result<T, ConfigError> {
+        self.get_entry_as(index)
+    }
+    fn get_entry_prop_as<T: KdlEntryExtract>(&self, key: &str) -> Result<T, ConfigError> {
+        self.get_entry_as(key)
+    }
+}
+
+impl KdlNodeExt for kdl::KdlNode {
+    fn get_entry_as<T: KdlEntryExtract>(
+        &self,
+        key: impl Into<kdl::NodeKey>,
+    ) -> Result<T, ConfigError> {
+        let key_node: kdl::NodeKey = key.into();
+        let key_type = match &key_node {
+            kdl::NodeKey::Key(name) => format!("missing property '{}'", name.value()),
+            kdl::NodeKey::Index(index) => format!("missing argument #{}", index),
+        };
+        let entry = match self.entry(key_node) {
+            None => {
+                return Err(kdl_parsing_error!(key_type, self));
             }
+            Some(e) => e,
+        };
+
+        match T::extract(entry) {
+            Some(val) => Ok(val),
+            _ => Err(kdl_error_invalid_type!(entry, T::TYPE_NAME)),
         }
-    }};
+    }
+}
+
+trait KdlNodeLookup {
+    fn get_node(&self, name: &str) -> Option<&kdl::KdlNode>;
+    fn get_node_entry_as<T: KdlEntryExtract>(
+        &self,
+        name: &str,
+        key: impl Into<kdl::NodeKey>,
+    ) -> Result<T, ConfigError>;
+    fn get_node_first_arg_as<T: KdlEntryExtract>(&self, name: &str) -> Result<T, ConfigError> {
+        self.get_node_entry_as(name, 0)
+    }
+}
+
+impl KdlNodeLookup for kdl::KdlDocument {
+    fn get_node(&self, name: &str) -> Option<&kdl::KdlNode> {
+        self.get(name)
+    }
+    fn get_node_entry_as<T: KdlEntryExtract>(
+        &self,
+        name: &str,
+        key: impl Into<kdl::NodeKey>,
+    ) -> Result<T, ConfigError> {
+        match self.get(name) {
+            None => Err(kdl_node_required!(self, name)),
+            Some(node) => node.get_entry_as(key),
+        }
+    }
+}
+
+impl KdlNodeLookup for kdl::KdlNode {
+    fn get_node(&self, name: &str) -> Option<&kdl::KdlNode> {
+        self.children().and_then(|doc| doc.get(name))
+    }
+
+    fn get_node_entry_as<T: KdlEntryExtract>(
+        &self,
+        name: &str,
+        key: impl Into<kdl::NodeKey>,
+    ) -> Result<T, ConfigError> {
+        match self.get_node(name) {
+            None => Err(kdl_node_required!(self, name)),
+            Some(node) => node.get_entry_as(key),
+        }
+    }
 }
 
 impl Options {
     pub fn from_kdl(kdl_doc: &kdl::KdlDocument) -> Result<Self, ConfigError> {
-        let dotfiles_dir = kdl_node_first_arg_as_string_or_error!(kdl_doc, "dotfiles_dir")
-            .map(|(v, _)| PathBuf::from(v))
-            .ok_or(kdl_node_required!(kdl_doc, "dotfiles_dir"))?;
+        let dotfiles_dir =
+            kdl_doc.get_node_first_arg_as::<String>("dotfiles_dir").map(PathBuf::from)?;
 
         let mut options = Options::create(dotfiles_dir);
         let mut package_managers = vec![];
@@ -345,8 +355,8 @@ impl Options {
 impl EnvironmentVariables {
     pub fn apply_kdl(&mut self, kdl_doc: &kdl::KdlDocument) -> Result<(), ConfigError> {
         for node in kdl_doc.nodes().iter().filter(|n| n.name().value() == "env") {
-            if let Some((inherit, _e)) = kdl_entry_bool_or_error!(node, "inherit")
-                && let Some((key, _e)) = kdl_entry_string!(node, 0)
+            if let Ok(inherit) = node.get_entry_prop_as::<bool>("inherit")
+                && let Ok(key) = node.get_entry_arg_as::<String>(0)
             {
                 if inherit && let Ok(system_value) = std::env::var(&key) {
                     self.env.insert(key.to_string(), system_value);
@@ -366,11 +376,9 @@ impl EnvironmentVariables {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use kdl::KdlDocument;
 
-    fn document(input: &str) -> kdl::KdlDocument {
-        input.parse().unwrap()
-    }
+    use super::*;
 
     #[test]
     fn test_options_from_kdl() {
@@ -387,8 +395,8 @@ mod tests {
             // package_managers #true // fail with "must be a string" error
             // package_managers // fail with "canot be empty" error
         "#;
-        let kdl_doc = document(kdl_str);
-        let options = Options::from_kdl(&kdl_doc).unwrap();
+        let kdl_doc: KdlDocument = kdl_str.parse().unwrap();
+        let options = Options::from_kdl(&kdl_doc).map_err(|err| miette::Error::new(err).with_source_code(kdl_str)).unwrap();
         assert_eq!(options.dotfiles_dir, PathBuf::from("/home/user/dotfiles"));
         assert_eq!(options.package_manager.len(), 1);
         assert!(options.package_manager.contains_key(&PackageManager::RustCargo));
@@ -401,7 +409,8 @@ mod tests {
             std::env::set_var("GIBRISH_1", "gibrish-1");
         }
         let kdl_str = r#"
-            // env HOME inherit=12345 // error: inherit must be boolean
+            // env HOME inherit=12345 // error: invalid type
+            // env KEY1 12345 // error: invalid type
             env GIBRISH inherit=#true
             env GIBRISH_1 inherit=#false
             env PLAIN inherit=#false
@@ -412,13 +421,12 @@ mod tests {
             env KEY5 "${GIBRISH_1:-not-inherited}_extended"
             env KEY6 "${PLAIN:-removed}_extended"
 
-            // hello "ignored"
-
+            hello "ignored"
         "#;
-        let kdl_doc = document(kdl_str);
+        let kdl_doc: KdlDocument = kdl_str.parse().unwrap();
         let mut env = EnvironmentVariables::default();
         env.env.insert("PLAIN".to_string(), "im-plain".to_string());
-        env.apply_kdl(&kdl_doc).unwrap();
+        env.apply_kdl(&kdl_doc).map_err(|err| miette::Error::new(err).with_source_code(kdl_str)).unwrap();
         assert_eq!(env.env.get("KEY1").unwrap(), "value1");
         assert_eq!(env.env.get("KEY2").unwrap(), "value1_suffix");
         assert_eq!(env.env.get("KEY3").unwrap(), "value1_suffix_more");
