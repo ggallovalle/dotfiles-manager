@@ -1,3 +1,4 @@
+use crate::config::env::EnvironmentVariables;
 use crate::config::root::Options;
 use crate::config::root::PackageManager;
 use std::{fmt::Display, path::PathBuf};
@@ -93,11 +94,7 @@ macro_rules! kdl_parsing_error {
 
 macro_rules! kdl_property_required {
     ( $kdl_node:expr, $property_name:expr ) => {
-        ConfigError::new_kdl_error(
-            format!("Property {} is required", $property_name),
-            $kdl_node.span().offset(),
-            $kdl_node.span().len(),
-        )
+        kdl_parsing_error!(format!("Property {} is required", $property_name), $kdl_node)
     };
 }
 
@@ -108,26 +105,150 @@ macro_rules! kdl_property_first_arg_as_string_or_error {
                 Some(first_entry) => match first_entry.value().as_string() {
                     Some(string_entry) => Some((string_entry, first_entry)),
                     None => {
-                        return Err(ConfigError::new_kdl_error(
+                        return Err(kdl_parsing_error!(
                             format!(
                                 "Property {} must be a string, found: {}",
                                 $property_name,
                                 first_entry.value()
                             ),
-                            property.span().offset(),
-                            property.span().len(),
+                            property
                         ));
                     }
                 },
                 None => {
-                    return Err(ConfigError::new_kdl_error(
+                    return Err(kdl_parsing_error!(
                         format!("Property {} must have a value", $property_name),
-                        property.span().offset(),
-                        property.span().len(),
+                        property
                     ));
                 }
             },
             None => None,
+        }
+    }};
+}
+macro_rules! kdl_entry_key_value_or_error {
+    (  $node:expr, $property_name:expr ) => {{
+        let mut entries = $node.entries().iter();
+        match entries.next() {
+            None => {
+                return Err(kdl_parsing_error!(
+                    format!("node {} must have a key and a value", $property_name),
+                    $node
+                ));
+            }
+            Some(entry) => match entry.name() {
+                Some(name) => (name.value().to_string(), entry.value()),
+                None => match entries.next() {
+                    None => {
+                        return Err(kdl_parsing_error!(
+                            format!("node {} must have a key and a value", $property_name),
+                            $node
+                        ));
+                    }
+                    Some(value_entry) => {
+                        if !entry.value().is_string() {
+                            return Err(kdl_parsing_error!(
+                                format!("the key in node {} must be a string", $property_name),
+                                entry
+                            ));
+                        }
+                        let key = entry.value().as_string().unwrap().to_string();
+                        (key, value_entry.value())
+                    }
+                },
+            },
+        }
+    }};
+}
+
+macro_rules! kdl_entry_key_value_string_or_error {
+    (  $node:expr, $property_name:expr ) => {
+        match kdl_entry_key_value_or_error!($node, $property_name) {
+            (key, value) => match value {
+                kdl::KdlValue::String(string_value) => (key, string_value),
+                _ => {
+                    return Err(kdl_parsing_error!(
+                        format!(
+                            "the value in node {} with key {} must be a string",
+                            $property_name, key
+                        ),
+                        $node
+                    ));
+                }
+            },
+        }
+    };
+}
+
+macro_rules! kdl_entry_string_or_error {
+    ( $kdl_node:expr, $prop:expr ) => {{
+        {
+            let node_key: kdl::NodeKey = $prop.into();
+            let entry_type = match node_key {
+                kdl::NodeKey::Index(_) => "argument",
+                kdl::NodeKey::Key(_) => "property",
+            };
+            match $kdl_node.entry(node_key) {
+                None => None,
+                Some(entry) => match entry.value().as_string() {
+                    None => {
+                        return Err(kdl_parsing_error!(
+                            format!(
+                                "node {} {} {} must be a string",
+                                $kdl_node.name().value(),
+                                entry_type,
+                                $prop
+                            ),
+                            entry
+                        ));
+                    }
+                    Some(string_value) => Some(string_value),
+                },
+            }
+        }
+    }};
+}
+
+macro_rules! kdl_entry_string {
+    ( $kdl_node:expr, $prop:expr ) => {{
+        {
+            let node_key: kdl::NodeKey = $prop.into();
+            match $kdl_node.entry(node_key) {
+                None => None,
+                Some(entry) => match entry.value().as_string() {
+                    None => None,
+                    Some(string_value) => Some((string_value, entry)),
+                },
+            }
+        }
+    }};
+}
+
+macro_rules! kdl_entry_bool_or_error {
+    ( $kdl_node:expr, $prop:expr ) => {{
+        {
+            let node_key: kdl::NodeKey = $prop.into();
+            let entry_type = match node_key {
+                kdl::NodeKey::Index(_) => "argument",
+                kdl::NodeKey::Key(_) => "property",
+            };
+            match $kdl_node.entry(node_key) {
+                None => None,
+                Some(entry) => match entry.value().as_bool() {
+                    None => {
+                        return Err(kdl_parsing_error!(
+                            format!(
+                                "node {} {} {} must be a boolean",
+                                $kdl_node.name().value(),
+                                entry_type,
+                                $prop
+                            ),
+                            entry
+                        ));
+                    }
+                    Some(bool_value) => Some(bool_value),
+                },
+            }
         }
     }};
 }
@@ -210,6 +331,27 @@ impl Options {
     }
 }
 
+impl EnvironmentVariables {
+    pub fn apply_kdl(&mut self, kdl_env: &kdl::KdlDocument) -> Result<(), ConfigError> {
+        for node in kdl_env.nodes().iter().filter(|n| n.name().value() == "env") {
+            if let Some(inherit) = kdl_entry_bool_or_error!(node, "inherit")
+                && let Some((key, _)) = kdl_entry_string!(node, 0)
+            {
+                if inherit && let Ok(system_value) = std::env::var(&key) {
+                    self.env.insert(key.to_string(), system_value);
+                } else {
+                    self.env.shift_remove(&key.to_string());
+                }
+                continue;
+            }
+
+            let (key, value) = kdl_entry_key_value_string_or_error!(node, "env");
+            self.env.insert(key, self.expand(&value));
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,5 +380,38 @@ mod tests {
         assert_eq!(options.dotfiles_dir, PathBuf::from("/home/user/dotfiles"));
         assert_eq!(options.package_manager.len(), 1);
         assert!(options.package_manager.contains_key(&PackageManager::RustCargo));
+    }
+
+    #[test]
+    fn test_env_apply_kdl() {
+        unsafe {
+            std::env::set_var("GIBRISH", "gibrish");
+            std::env::set_var("GIBRISH_1", "gibrish-1");
+        }
+        let kdl_str = r#"
+            env GIBRISH inherit=#true
+            env GIBRISH_1 inherit=#false
+            env PLAIN inherit=#false
+            env KEY1 "value1"
+            env KEY2 "${KEY1}_suffix"
+            env KEY3="${KEY2}_more"
+            env KEY4="${GIBRISH}_extended"
+            env KEY5 "${GIBRISH_1:-not-inherited}_extended"
+            env KEY6 "${PLAIN:-removed}_extended"
+
+            // hello "ignored"
+
+            // env HOME inherit=12345 // error: inherit must be boolean
+        "#;
+        let kdl_doc = document(kdl_str);
+        let mut env = EnvironmentVariables::default();
+        env.env.insert("PLAIN".to_string(), "im-plain".to_string());
+        env.apply_kdl(&kdl_doc).unwrap();
+        assert_eq!(env.env.get("KEY1").unwrap(), "value1");
+        assert_eq!(env.env.get("KEY2").unwrap(), "value1_suffix");
+        assert_eq!(env.env.get("KEY3").unwrap(), "value1_suffix_more");
+        assert_eq!(env.env.get("KEY4").unwrap(), "gibrish_extended");
+        assert_eq!(env.env.get("KEY5").unwrap(), "not-inherited_extended");
+        assert_eq!(env.env.get("KEY6").unwrap(), "removed_extended");
     }
 }
