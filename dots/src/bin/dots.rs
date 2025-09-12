@@ -2,6 +2,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete;
 use miette;
 use std::path::PathBuf;
+use dots::Dots;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -78,15 +79,56 @@ pub enum NamespaceCommand {
 
 fn main() -> miette::Result<()> {
     let args = Cli::parse();
+    println!("CLI args: {:#?}", args);
     match args.command {
+        Commands::Doctor { bundles } => {
+            let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+            dots.dependencies_doctor()?;
+            dots.dotfiles_doctor()?;
+        },
+        Commands::Install { bundles } => {
+            let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+            dots.dependencies_install()?;
+            dots.dotfiles_install()?;
+        },
+        Commands::Uninstall { bundles } => {
+            let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+            dots.dependencies_uninstall()?;
+            dots.dotfiles_uninstall()?;
+        },
+        Commands::Dependencies { command } => match command {
+            NamespaceCommand::Doctor { bundles } => {
+                let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+                dots.dependencies_doctor()?;
+            },
+            NamespaceCommand::Install { bundles } => {
+                let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+                dots.dependencies_install()?;
+            },
+            NamespaceCommand::Uninstall { bundles } => {
+                let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+                dots.dependencies_uninstall()?;
+            },
+        },
+        Commands::Dotfiles { command } => match command {
+            NamespaceCommand::Doctor { bundles } => {
+                let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+                dots.dotfiles_doctor()?;
+            },
+            NamespaceCommand::Install { bundles } => {
+                let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+                dots.dotfiles_install()?;
+            },
+            NamespaceCommand::Uninstall { bundles } => {
+                let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+                dots.dotfiles_uninstall()?;
+            },
+        },
         Commands::GenerateCompletions { shell } => {
             let mut cmd = Cli::command();
             let name = cmd.get_name().to_string();
             clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
-        }
-        _ => {
-            println!("CLI args: {:#?}", args);
-        }
+        },
     }
 
     Ok(())
