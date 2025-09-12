@@ -1,8 +1,11 @@
+use crate::config::bundle::{self, Bundle};
 use crate::config::env::EnvironmentVariables;
 use crate::config::root::Options;
 use crate::config::root::PackageManager;
-use std::{fmt::Display, path::PathBuf};
 use either;
+use semver;
+use std::collections::HashMap;
+use std::{fmt::Display, path::PathBuf};
 
 use miette::{self, Diagnostic, LabeledSpan, NamedSource, SourceCode};
 use thiserror::Error;
@@ -323,13 +326,8 @@ impl KdlNodeExt for kdl::KdlNode {
 pub trait KdlNodeLookup {
     fn get_node(&self, name: &str) -> Option<&kdl::KdlNode>;
     fn get_node_required(&self, name: &str) -> Result<&kdl::KdlNode, ConfigError>;
-    fn get_children<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = &'a kdl::KdlNode>;
-    fn get_children_named<'a>(
-        &'a self,
-        name: &str,
-    ) -> impl Iterator<Item = &'a kdl::KdlNode> {
+    fn get_children<'a>(&'a self) -> impl Iterator<Item = &'a kdl::KdlNode>;
+    fn get_children_named<'a>(&'a self, name: &str) -> impl Iterator<Item = &'a kdl::KdlNode> {
         self.get_children().filter(move |n| n.name().value() == name)
     }
 }
@@ -344,9 +342,7 @@ impl KdlNodeLookup for kdl::KdlDocument {
             Some(node) => Ok(node),
         }
     }
-    fn get_children<'a>(
-            &'a self,
-        ) -> impl Iterator<Item = &'a kdl::KdlNode> {
+    fn get_children<'a>(&'a self) -> impl Iterator<Item = &'a kdl::KdlNode> {
         self.nodes().iter()
     }
 }
@@ -362,9 +358,7 @@ impl KdlNodeLookup for kdl::KdlNode {
             Some(node) => Ok(node),
         }
     }
-    fn get_children<'a>(
-            &'a self,
-        ) -> impl Iterator<Item = &'a kdl::KdlNode> {
+    fn get_children<'a>(&'a self) -> impl Iterator<Item = &'a kdl::KdlNode> {
         match self.children() {
             None => either::Left(core::iter::empty()),
             Some(doc) => either::Right(doc.get_children()),
@@ -436,6 +430,75 @@ impl EnvironmentVariables {
     }
 }
 
+impl Bundle {
+    fn dependencies_from_kdl(
+        deps_node: &impl KdlNodeLookup,
+    ) -> Result<Vec<bundle::Dependency>, ConfigError> {
+        let mut dependencies_hash = HashMap::new();
+        for dep_item_node in deps_node.get_children() {
+            let dep_name = dep_item_node.name().value();
+
+            let dep_version = match dep_item_node.try_get_entry_arg_as::<String>(0)? {
+                Some((v, e)) => Some((v, e)),
+                None => match dep_item_node.try_get_entry_prop_as::<String>("version")? {
+                    Some((v, e)) => Some((v, e)),
+                    None => None,
+                },
+            };
+            let dep_version_req = match &dep_version {
+                Some((v, e)) => match semver::VersionReq::parse(v) {
+                    Ok(req) => Some(req),
+                    Err(err) => {
+                        return Err(kdl_error!(
+                                    format!("invalid version requirement: {}", err),
+                                    e,
+                                    "use a valid semver version requirement, see https://docs.rs/semver/latest/semver/struct.VersionReq.html#syntax".to_string()
+                                ));
+                    }
+                },
+                None => None,
+            };
+            if dependencies_hash.contains_key(dep_name) {
+                return Err(kdl_error!(
+                    format!("dependency {} is already defined", dep_name),
+                    dep_item_node,
+                    "remove the duplicate definition".to_string()
+                ));
+            }
+
+            let manager = match dep_item_node.try_get_entry_prop_as::<PackageManager>("manager")? {
+                Some((m, _s)) => Some(m),
+                None => None,
+            };
+
+            dependencies_hash.insert(
+                dep_name.to_string(),
+                bundle::Dependency {
+                    name: dep_name.to_string(),
+                    version: dep_version_req,
+                    manager: manager,
+                },
+            );
+        }
+        Ok(dependencies_hash.into_values().collect())
+    }
+
+    pub fn from_kdl(root: &impl KdlNodeLookup) -> Result<Vec<Self>, ConfigError> {
+        let mut bundles = vec![];
+
+        for bundle_node in root.get_children_named("bundle") {
+            let name = bundle_node.get_entry_arg_as::<String>(0)?;
+            let dependencies = match bundle_node.get_node("dependencies") {
+                None => vec![],
+                Some(deps_node) => Bundle::dependencies_from_kdl(deps_node)?,
+            };
+            bundles.push(Bundle { name, dependencies, dotfiles: vec![] });
+        }
+
+        Ok(bundles)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use kdl::KdlDocument;
@@ -503,5 +566,63 @@ mod tests {
         assert_eq!(env.env.get("KEY4").unwrap(), "gibrish_extended");
         assert_eq!(env.env.get("KEY5").unwrap(), "not-inherited_extended");
         assert_eq!(env.env.get("KEY6").unwrap(), "removed_extended");
+    }
+
+    #[test]
+    fn test_bundle_from_kdl_root() {
+        let kdl_str = r#"
+            bundle "zsh" { }
+
+            bundle "neovim" { }
+        "#;
+        let kdl_doc: KdlDocument = kdl_str.parse().unwrap();
+        let bundles = Bundle::from_kdl(&kdl_doc)
+            .map_err(|err| miette::Error::new(err).with_source_code(kdl_str))
+            .unwrap();
+        assert_eq!(bundles.len(), 2);
+        assert_eq!(bundles[0].name, "zsh");
+        assert_eq!(bundles[0].dependencies.len(), 0);
+        assert_eq!(bundles[0].dotfiles.len(), 0);
+        assert_eq!(bundles[1].name, "neovim");
+        assert_eq!(bundles[1].dependencies.len(), 0);
+        assert_eq!(bundles[1].dotfiles.len(), 0);
+    }
+
+    #[test]
+    fn test_bundle_from_kdl_dependencies() {
+        let kdl_str = r#"
+            bundle "zsh" {
+                dependencies {
+                    // zsh ">=3.8" // valid
+                    zsh version=">=5.8" // valid
+                    // zsh #true // error: invalid type on version
+                    // zsh version=12345 // error: invalid type on version
+                    // zsh version="invalid" // error: invalid version requirement
+
+                    zoxide manager="cargo" // valid
+                    // zoxide manager="unknown" // invalid
+                }
+            }
+
+            bundle "neovim" { }
+        "#;
+        let kdl_doc: KdlDocument = kdl_str.parse().unwrap();
+        let bundles = Bundle::from_kdl(&kdl_doc)
+            .map_err(|err| miette::Error::new(err).with_source_code(kdl_str))
+            .unwrap();
+        let version_on_system = semver::Version::parse("10.0.0").unwrap();
+        assert_eq!(bundles.len(), 2);
+        assert_eq!(bundles[0].dependencies.len(), 2);
+        assert_eq!(bundles[0].dependencies[0].name, "zsh");
+        let version_req = bundles[0].dependencies[0].version.as_ref().unwrap();
+        assert!(
+            version_req.matches(&version_on_system),
+            "required: {}, found: {}",
+            version_req,
+            version_on_system
+        );
+        assert_eq!(bundles[0].dependencies[1].name, "zoxide");
+        assert!(bundles[0].dependencies[1].version.is_none());
+        assert_eq!(bundles[0].dependencies[1].manager, Some(PackageManager::RustCargo));
     }
 }
