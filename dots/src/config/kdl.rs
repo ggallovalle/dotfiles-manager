@@ -2,6 +2,7 @@ use crate::config::env::EnvironmentVariables;
 use crate::config::root::Options;
 use crate::config::root::PackageManager;
 use std::{fmt::Display, path::PathBuf};
+use either;
 
 use miette::{self, Diagnostic, LabeledSpan, NamedSource, SourceCode};
 use thiserror::Error;
@@ -319,16 +320,17 @@ impl KdlNodeExt for kdl::KdlNode {
     }
 }
 
-trait KdlNodeLookup {
+pub trait KdlNodeLookup {
     fn get_node(&self, name: &str) -> Option<&kdl::KdlNode>;
     fn get_node_required(&self, name: &str) -> Result<&kdl::KdlNode, ConfigError>;
-    fn get_node_entry_as<T: KdlEntryExtract>(
-        &self,
+    fn get_children<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = &'a kdl::KdlNode>;
+    fn get_children_named<'a>(
+        &'a self,
         name: &str,
-        key: impl Into<kdl::NodeKey>,
-    ) -> Result<T, ConfigError>;
-    fn get_node_first_arg_as<T: KdlEntryExtract>(&self, name: &str) -> Result<T, ConfigError> {
-        self.get_node_entry_as(name, 0)
+    ) -> impl Iterator<Item = &'a kdl::KdlNode> {
+        self.get_children().filter(move |n| n.name().value() == name)
     }
 }
 
@@ -342,15 +344,10 @@ impl KdlNodeLookup for kdl::KdlDocument {
             Some(node) => Ok(node),
         }
     }
-    fn get_node_entry_as<T: KdlEntryExtract>(
-        &self,
-        name: &str,
-        key: impl Into<kdl::NodeKey>,
-    ) -> Result<T, ConfigError> {
-        match self.get(name) {
-            None => Err(kdl_error_required!(self, name)),
-            Some(node) => node.get_entry_as(key),
-        }
+    fn get_children<'a>(
+            &'a self,
+        ) -> impl Iterator<Item = &'a kdl::KdlNode> {
+        self.nodes().iter()
     }
 }
 
@@ -365,26 +362,25 @@ impl KdlNodeLookup for kdl::KdlNode {
             Some(node) => Ok(node),
         }
     }
-
-    fn get_node_entry_as<T: KdlEntryExtract>(
-        &self,
-        name: &str,
-        key: impl Into<kdl::NodeKey>,
-    ) -> Result<T, ConfigError> {
-        match self.get_node(name) {
-            None => Err(kdl_error_required!(self, name)),
-            Some(node) => node.get_entry_as(key),
+    fn get_children<'a>(
+            &'a self,
+        ) -> impl Iterator<Item = &'a kdl::KdlNode> {
+        match self.children() {
+            None => either::Left(core::iter::empty()),
+            Some(doc) => either::Right(doc.get_children()),
         }
     }
 }
 
 impl Options {
-    pub fn from_kdl(kdl_doc: &kdl::KdlDocument) -> Result<Self, ConfigError> {
-        let dotfiles_dir =
-            kdl_doc.get_node_first_arg_as::<String>("dotfiles_dir").map(PathBuf::from)?;
+    pub fn from_kdl(root: &impl KdlNodeLookup) -> Result<Self, ConfigError> {
+        let dotfiles_dir = root
+            .get_node_required("dotfiles_dir")?
+            .get_entry_arg_as::<String>(0)
+            .map(PathBuf::from)?;
 
         let mut options = Options::create(dotfiles_dir);
-        let managers = kdl_doc
+        let managers = root
             .get_node_required("package_managers")
             .and_then(|node| node.get_node_as::<Vec<PackageManager>>())
             .and_then(|managers| {
@@ -418,10 +414,10 @@ impl Options {
 }
 
 impl EnvironmentVariables {
-    pub fn apply_kdl(&mut self, kdl_doc: &kdl::KdlDocument) -> Result<(), ConfigError> {
-        for node in kdl_doc.nodes().iter().filter(|n| n.name().value() == "env") {
-            if let Ok(inherit) = node.get_entry_prop_as::<bool>("inherit")
-                && let Ok(key) = node.get_entry_arg_as::<String>(0)
+    pub fn apply_kdl(&mut self, root: &impl KdlNodeLookup) -> Result<(), ConfigError> {
+        for env_node in root.get_children_named("env") {
+            if let Ok(inherit) = env_node.get_entry_prop_as::<bool>("inherit")
+                && let Ok(key) = env_node.get_entry_arg_as::<String>(0)
             {
                 if inherit {
                     if let Ok(system_value) = std::env::var(&key) {
@@ -433,7 +429,7 @@ impl EnvironmentVariables {
                 continue;
             }
 
-            let ((key, value), _s) = node.get_node_as::<(String, String)>()?;
+            let ((key, value), _s) = env_node.get_node_as::<(String, String)>()?;
             self.env.insert(key.to_string(), self.expand(&value));
         }
         Ok(())
