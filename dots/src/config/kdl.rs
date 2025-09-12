@@ -102,9 +102,28 @@ macro_rules! kdl_error {
     };
 }
 
+macro_rules! kdl_error_span {
+    ( $message:expr, $span:expr ) => {
+        ConfigError::new_kdl_error($message, $span.offset(), $span.len())
+    };
+    ( $message:expr, $span:expr, $help: expr ) => {
+        kdl_error_span!($message, $span).set_help_message($help)
+    };
+}
+
 macro_rules! kdl_error_required {
     ( $kdl_node:expr, $property_name:expr ) => {
         kdl_error!(format!("node {} is required", $property_name), $kdl_node)
+    };
+}
+
+macro_rules! kdl_error_empty {
+    ( $kdl_node:expr ) => {
+        kdl_error!(
+            "node can not be empty (without arguments)".to_string(),
+            $kdl_node,
+            "add at least one argument to the node".to_string()
+        )
     };
 }
 
@@ -132,40 +151,61 @@ macro_rules! kdl_error_invalid_type {
 
 trait KdlEntryExtract: Sized {
     const TYPE_NAME: &'static str;
-    fn extract(entry: &kdl::KdlEntry) -> Option<Self>;
+    fn extract(entry: &kdl::KdlEntry) -> Result<Self, ConfigError>;
 }
 
 impl KdlEntryExtract for String {
     const TYPE_NAME: &'static str = "string";
-    fn extract(entry: &kdl::KdlEntry) -> Option<Self> {
+    fn extract(entry: &kdl::KdlEntry) -> Result<Self, ConfigError> {
         if entry.ty().is_some() {
-            return None;
+            return Err(kdl_error_invalid_type!(entry, Self::TYPE_NAME));
         }
-        entry.value().as_string().map(|s| s.to_owned())
+        entry
+            .value()
+            .as_string()
+            .map(|s| s.to_owned())
+            .ok_or(kdl_error_invalid_type!(entry, Self::TYPE_NAME))
     }
 }
 
 impl KdlEntryExtract for bool {
     const TYPE_NAME: &'static str = "bool";
-    fn extract(entry: &kdl::KdlEntry) -> Option<Self> {
+    fn extract(entry: &kdl::KdlEntry) -> Result<Self, ConfigError> {
         if entry.ty().is_some() {
-            return None;
+            return Err(kdl_error_invalid_type!(entry, Self::TYPE_NAME));
         }
-        entry.value().as_bool()
+        entry.value().as_bool().ok_or(kdl_error_invalid_type!(entry, Self::TYPE_NAME))
+    }
+}
+
+impl KdlEntryExtract for PackageManager {
+    const TYPE_NAME: &'static str = "package manager";
+    fn extract(entry: &kdl::KdlEntry) -> Result<Self, ConfigError> {
+        String::extract(entry).and_then(|m| {
+            m.parse::<Self>().map_err(|valid_names| {
+                kdl_error_span!(
+                    format!("unknown varian: {}", m,),
+                    entry.span(),
+                    format!("select one of: {}", valid_names.join(", "))
+                )
+            })
+        })
     }
 }
 
 trait KdlNodeExtract: Sized {
     const TYPE_NAME: &'static str;
-    fn extract(node: &kdl::KdlNode) -> Result<Self, ConfigError>;
+    type Success;
+    fn extract(node: &kdl::KdlNode) -> Result<Self::Success, ConfigError>;
 }
 
 impl<T> KdlNodeExtract for (String, T)
 where
     T: KdlEntryExtract,
 {
+    type Success = ((String, T), miette::SourceSpan);
     const TYPE_NAME: &'static str = "key-value pair";
-    fn extract(node: &kdl::KdlNode) -> Result<Self, ConfigError> {
+    fn extract(node: &kdl::KdlNode) -> Result<Self::Success, ConfigError> {
         let mut entries = node.entries().iter();
         let (key, value_entry) = match entries.next() {
             None => {
@@ -175,10 +215,7 @@ where
                 Some(name) => (name.value(), key_entry),
                 None => match entries.next() {
                     None => {
-                        return Err(kdl_error!(
-                            "expected a key-value pair".to_string(),
-                            node
-                        ));
+                        return Err(kdl_error!("expected a key-value pair".to_string(), node));
                     }
                     Some(value_entry)
                         if key_entry.value().is_string() && key_entry.ty().is_none() =>
@@ -192,12 +229,23 @@ where
                 },
             },
         };
-        let value = match T::extract(value_entry) {
-            Some(v) => v,
-            None => return Err(kdl_error_invalid_type!(value_entry, T::TYPE_NAME)),
-        };
 
-        Ok((key.to_string(), value))
+        Ok(((key.to_string(), T::extract(value_entry)?), value_entry.span()))
+    }
+}
+
+impl<T> KdlNodeExtract for Vec<T>
+where
+    T: KdlEntryExtract,
+{
+    type Success = Vec<(T, miette::SourceSpan)>;
+    const TYPE_NAME: &'static str = "list";
+    fn extract(node: &kdl::KdlNode) -> Result<Self::Success, ConfigError> {
+        let mut values = vec![];
+        for entry in node.entries().iter().filter(|e| e.name().is_none()) {
+            values.push((T::extract(entry)?, entry.span()));
+        }
+        if values.is_empty() { Err(kdl_error_empty!(node)) } else { Ok(values) }
     }
 }
 
@@ -232,7 +280,7 @@ trait KdlNodeExt {
         self.try_get_entry_as(key)
     }
 
-    fn get_node_as<T: KdlNodeExtract>(&self) -> Result<T, ConfigError>;
+    fn get_node_as<T: KdlNodeExtract>(&self) -> Result<T::Success, ConfigError>;
 }
 
 impl KdlNodeExt for kdl::KdlNode {
@@ -252,10 +300,7 @@ impl KdlNodeExt for kdl::KdlNode {
             Some(e) => e,
         };
 
-        match T::extract(entry) {
-            Some(val) => Ok(val),
-            _ => Err(kdl_error_invalid_type!(entry, T::TYPE_NAME)),
-        }
+        T::extract(entry)
     }
 
     fn try_get_entry_as<T: KdlEntryExtract>(
@@ -265,20 +310,18 @@ impl KdlNodeExt for kdl::KdlNode {
         let key_node: kdl::NodeKey = key.into();
         match self.entry(key_node) {
             None => Ok(None),
-            Some(entry) => match T::extract(entry) {
-                Some(val) => Ok(Some((val, entry))),
-                _ => Err(kdl_error_invalid_type!(entry, T::TYPE_NAME)),
-            },
+            Some(entry) => T::extract(entry).map(|val| Some((val, entry))),
         }
     }
 
-    fn get_node_as<T: KdlNodeExtract>(&self) -> Result<T, ConfigError> {
+    fn get_node_as<T: KdlNodeExtract>(&self) -> Result<T::Success, ConfigError> {
         T::extract(self)
     }
 }
 
 trait KdlNodeLookup {
     fn get_node(&self, name: &str) -> Option<&kdl::KdlNode>;
+    fn get_node_required(&self, name: &str) -> Result<&kdl::KdlNode, ConfigError>;
     fn get_node_entry_as<T: KdlEntryExtract>(
         &self,
         name: &str,
@@ -287,12 +330,17 @@ trait KdlNodeLookup {
     fn get_node_first_arg_as<T: KdlEntryExtract>(&self, name: &str) -> Result<T, ConfigError> {
         self.get_node_entry_as(name, 0)
     }
-    fn get_child_node_as<T: KdlNodeExtract>(&self, name: &str) -> Result<T, ConfigError>;
 }
 
 impl KdlNodeLookup for kdl::KdlDocument {
     fn get_node(&self, name: &str) -> Option<&kdl::KdlNode> {
         self.get(name)
+    }
+    fn get_node_required(&self, name: &str) -> Result<&kdl::KdlNode, ConfigError> {
+        match self.get(name) {
+            None => Err(kdl_error_required!(self, name)),
+            Some(node) => Ok(node),
+        }
     }
     fn get_node_entry_as<T: KdlEntryExtract>(
         &self,
@@ -302,13 +350,6 @@ impl KdlNodeLookup for kdl::KdlDocument {
         match self.get(name) {
             None => Err(kdl_error_required!(self, name)),
             Some(node) => node.get_entry_as(key),
-        }
-    }
-
-    fn get_child_node_as<T: KdlNodeExtract>(&self, name: &str) -> Result<T, ConfigError> {
-        match self.get(name) {
-            None => Err(kdl_error_required!(self, name)),
-            Some(node) => T::extract(node),
         }
     }
 }
@@ -318,6 +359,13 @@ impl KdlNodeLookup for kdl::KdlNode {
         self.children().and_then(|doc| doc.get(name))
     }
 
+    fn get_node_required(&self, name: &str) -> Result<&kdl::KdlNode, ConfigError> {
+        match self.get_node(name) {
+            None => Err(kdl_error_required!(self, name)),
+            Some(node) => Ok(node),
+        }
+    }
+
     fn get_node_entry_as<T: KdlEntryExtract>(
         &self,
         name: &str,
@@ -326,13 +374,6 @@ impl KdlNodeLookup for kdl::KdlNode {
         match self.get_node(name) {
             None => Err(kdl_error_required!(self, name)),
             Some(node) => node.get_entry_as(key),
-        }
-    }
-
-    fn get_child_node_as<T: KdlNodeExtract>(&self, name: &str) -> Result<T, ConfigError> {
-        match self.get_node(name) {
-            None => Err(kdl_error_required!(self, name)),
-            Some(node) => T::extract(node),
         }
     }
 }
@@ -343,72 +384,34 @@ impl Options {
             kdl_doc.get_node_first_arg_as::<String>("dotfiles_dir").map(PathBuf::from)?;
 
         let mut options = Options::create(dotfiles_dir);
-        let mut package_managers = vec![];
-        match kdl_doc.get("package_managers") {
-            None => return Err(kdl_error_required!(kdl_doc, "package_managers")),
-            Some(node) => {
+        let managers = kdl_doc
+            .get_node_required("package_managers")
+            .and_then(|node| node.get_node_as::<Vec<PackageManager>>())
+            .and_then(|managers| {
                 let available_in_system =
                     options.package_manager.keys().cloned().collect::<Vec<_>>();
-
-                for entry in node.entries().iter() {
-                    if let Some(entry_name) = entry.name() {
-                        return Err(kdl_error!(
+                for (m, span) in &managers {
+                    if !options.package_manager.contains_key(m) {
+                        return Err(kdl_error_span!(
+                            format!("{} is not available on this system", m.to_string()),
+                            span,
                             format!(
-                                "Each entry in package_managers must be an argument, found property: {}",
-                                entry_name.value()
-                            ),
-                            entry_name,
-                            format!("write it as an argument, not a property.")
+                                "detected in this system are: {}",
+                                available_in_system
+                                    .iter()
+                                    .map(|pm| pm.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
                         ));
                     }
-                    match entry.value().as_string() {
-                        Some(string_entry) => match string_entry.parse::<PackageManager>() {
-                            Ok(package_manager) => {
-                                if !available_in_system.contains(&package_manager) {
-                                    return Err(kdl_error!(
-                                        format!(
-                                            "Package manager {} is not available on this system",
-                                            package_manager.to_string()
-                                        ),
-                                        entry,
-                                        format!(
-                                            "detected package managers on this system are: {}",
-                                            available_in_system
-                                                .iter()
-                                                .map(|pm| pm.to_string())
-                                                .collect::<Vec<_>>()
-                                                .join(", ")
-                                        )
-                                    ));
-                                }
-                                package_managers.push(package_manager);
-                            }
-                            Err(valid_names) => {
-                                return Err(kdl_error!(
-                                    format!("Invalid package manager: {}", string_entry,),
-                                    entry,
-                                    format!("Valid options are: {}", valid_names.join(", "))
-                                ));
-                            }
-                        },
-                        None => {
-                            return Err(kdl_error!(
-                                "Each entry in package_managers must be a string".into(),
-                                entry
-                            ));
-                        }
-                    }
                 }
-                if package_managers.is_empty() {
-                    return Err(kdl_error!(
-                        "package_managers can not be empty".into(),
-                        node,
-                        "add at least one element to the list".into()
-                    ));
-                }
-            }
-        }
-        options.package_manager.retain(|pm, _| package_managers.contains(pm));
+                Ok(managers)
+            })?;
+
+        // at this point I'm guaranteed to have at least one manager, because otherwise the
+        // kdl error would have been raised above
+        options.package_manager.retain(|pm, _| managers.iter().any(|(m, _s)| m == pm));
 
         Ok(options)
     }
@@ -420,15 +423,17 @@ impl EnvironmentVariables {
             if let Ok(inherit) = node.get_entry_prop_as::<bool>("inherit")
                 && let Ok(key) = node.get_entry_arg_as::<String>(0)
             {
-                if inherit && let Ok(system_value) = std::env::var(&key) {
-                    self.env.insert(key.to_string(), system_value);
+                if inherit {
+                    if let Ok(system_value) = std::env::var(&key) {
+                        self.env.insert(key.to_string(), system_value);
+                    }
                 } else {
                     self.env.shift_remove(&key.to_string());
                 }
                 continue;
             }
 
-            let (key, value) = node.get_node_as::<(String, String)>()?;
+            let ((key, value), _s) = node.get_node_as::<(String, String)>()?;
             self.env.insert(key.to_string(), self.expand(&value));
         }
         Ok(())
@@ -447,7 +452,7 @@ mod tests {
             dotfiles_dir "/home/user/dotfiles"
             package_managers cargo // comment to fail with "property required" error
 
-            // package_managers key="cargo" // fail with "no properties allowed" error
+            // package_managers key="cargo" // fail with "node canot be empty" error
 
             // package_managers "unknown_pm" // fail with "invalid package manager" error
 
