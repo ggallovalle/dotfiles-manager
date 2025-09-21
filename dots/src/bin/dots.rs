@@ -12,17 +12,22 @@ use dots::Dots;
     author = "Gerson G. <ggallovalle@gmail.com>"
 )]
 struct Cli {
+    /// Select which bundles to operate on (, delimited)
+    #[clap(long, value_name = "BUNDLE", value_delimiter=',', global=true)]
+    bundles: Vec<String>,
+
     /// Path to the config file
-    #[clap(short, long, default_value = "dotfiles.kdl", value_name = "FILE")]
+    #[clap(short, long, default_value = "dotfiles.kdl", value_name = "FILE", global=true)]
     config: PathBuf,
 
     /// Dry run mode
-    #[clap(long, action)]
+    #[clap(long, action, global=true)]
     dry_run: bool,
 
     /// How verbose the output should be
-    #[arg(short = 'v', action = clap::ArgAction::Count)]
+    #[arg(short = 'v', action = clap::ArgAction::Count, global=true)]
     verbose: u8,
+
 
     #[command(subcommand)]
     command: Commands,
@@ -31,23 +36,11 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Imply `dependencies doctor` and `dotfiles doctor`
-    Doctor {
-        /// Select which bundles to operate on
-        #[clap(value_name = "BUNDLE")]
-        bundles: Vec<String>,
-    },
+    Doctor,
     /// Imply `dependencies install` and `dotfiles install`
-    Install {
-        /// Select which bundles to operate on
-        #[clap(value_name = "BUNDLE")]
-        bundles: Vec<String>,
-    },
+    Install,
     /// Imply `dependencies uninstall` and `dotfiles uninstall`
-    Uninstall {
-        /// Select which bundles to operate on
-        #[clap(value_name = "BUNDLE")]
-        bundles: Vec<String>,
-    },
+    Uninstall,
     /// Manage dependencies like in package managers
     Dependencies {
         #[command(subcommand)]
@@ -70,57 +63,49 @@ enum Commands {
 #[derive(Subcommand, Debug)]
 pub enum NamespaceCommand {
     /// Test if everything is set up correctly
-    Doctor { bundles: Vec<String> },
+    Doctor,
     /// Install missing items
-    Install { bundles: Vec<String> },
+    Install,
     /// Uninstall items
-    Uninstall { bundles: Vec<String> },
+    Uninstall,
 }
 
 fn main() -> miette::Result<()> {
     let args = Cli::parse();
     println!("CLI args: {:#?}", args);
+    let mut dots = Dots::create(args.config, args.dry_run, args.bundles, args.verbose)?;
     match args.command {
-        Commands::Doctor { bundles } => {
-            let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+        Commands::Doctor => {
             dots.dependencies_doctor()?;
             dots.dotfiles_doctor()?;
         },
-        Commands::Install { bundles } => {
-            let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+        Commands::Install => {
             dots.dependencies_install()?;
             dots.dotfiles_install()?;
         },
-        Commands::Uninstall { bundles } => {
-            let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+        Commands::Uninstall => {
             dots.dependencies_uninstall()?;
             dots.dotfiles_uninstall()?;
         },
         Commands::Dependencies { command } => match command {
-            NamespaceCommand::Doctor { bundles } => {
-                let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+            NamespaceCommand::Doctor => {
                 dots.dependencies_doctor()?;
             },
-            NamespaceCommand::Install { bundles } => {
-                let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+            NamespaceCommand::Install => {
                 dots.dependencies_install()?;
             },
-            NamespaceCommand::Uninstall { bundles } => {
-                let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+            NamespaceCommand::Uninstall => {
                 dots.dependencies_uninstall()?;
             },
         },
         Commands::Dotfiles { command } => match command {
-            NamespaceCommand::Doctor { bundles } => {
-                let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+            NamespaceCommand::Doctor => {
                 dots.dotfiles_doctor()?;
             },
-            NamespaceCommand::Install { bundles } => {
-                let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+            NamespaceCommand::Install => {
                 dots.dotfiles_install()?;
             },
-            NamespaceCommand::Uninstall { bundles } => {
-                let mut dots = Dots::create(args.config, args.dry_run, bundles, args.verbose)?;
+            NamespaceCommand::Uninstall => {
                 dots.dotfiles_uninstall()?;
             },
         },
