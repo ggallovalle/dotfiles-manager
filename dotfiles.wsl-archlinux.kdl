@@ -7,6 +7,8 @@ env ZDOTDIR="${XDG_CONFIG_HOME}/zsh"
 bundle "zsh" {
     dependencies {
         zsh
+        zsh ">=5.8"
+        zsh version=">=5.8"
     }
     dotfiles {
         cp "zsh/home/dot_zshrc" "${ZDOTDIR}/.zshr"

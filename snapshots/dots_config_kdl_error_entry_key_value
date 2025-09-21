@@ -1,0 +1,10 @@
+Error: dots::config_kdl_error (link)
+
+  × kdl deserialization error: failed to parse Dots configuration
+   ╭─[8:14]
+ 7 │     env KEY1 "value1"
+ 8 │     env KEY1 #true
+   ·              ──┬──
+   ·                ╰── invalid type: bool, expected: string
+ 9 │     env KEY2 "${KEY1}_suffix"
+   ╰────
