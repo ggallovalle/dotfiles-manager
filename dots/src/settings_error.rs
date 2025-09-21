@@ -25,7 +25,8 @@ impl SettingsError {
     ) -> Self {
         let name = name.into();
         let input = input.into();
-        let named_source = Some(miette::NamedSource::new(name.clone(), input.clone()));
+        let named_source =
+            Some(miette::NamedSource::new(name.clone(), input.clone()).with_language("kdl"));
         SettingsError { input, diagnostics, named_source }
     }
 }
@@ -103,7 +104,7 @@ impl fmt::Display for SettingsDiagnostic {
 impl Diagnostic for SettingsDiagnostic {
     fn severity(&self) -> Option<miette::Severity> {
         match self {
-            SettingsDiagnostic::ParseError(error) => return error.severity(),
+            SettingsDiagnostic::ParseError(error) => return Some(error.severity),
             _ => {}
         };
 

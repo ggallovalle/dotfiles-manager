@@ -1,6 +1,224 @@
-use crate::settings_error::SettingsDiagnostic;
+use crate::{diag, settings::kdl_helpers::FromKdlEntry, settings_error::SettingsDiagnostic};
 use indexmap::IndexMap;
-use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
+use kdl::{KdlDiagnostic, KdlDocument, KdlEntry, KdlNode, KdlValue};
+use miette::{Severity, SourceSpan};
+
+#[derive(Debug, Clone)]
+pub struct Settings {
+    env: IndexMap<String, String>,
+    env_inherited_keys: Vec<String>,
+}
+
+impl Settings {
+    pub fn from_kdl(document: KdlDocument) -> Result<Self, Vec<SettingsDiagnostic>> {
+        let mut errors = Vec::new();
+        let mut env_map = env::base();
+        let env_inherited_keys = env_map.keys().cloned().collect::<Vec<_>>();
+
+        for node in document.nodes() {
+            match node.name().value() {
+                "export" => match EnvironmentItem::from_kdl_node(node, &env_map) {
+                    Ok((item, span)) => {
+                        env_map.insert(item.key.clone(), item.expanded.value.clone());
+                    }
+                    Err(e) => {
+                        errors.push(SettingsDiagnostic::ParseError(e));
+                    }
+                },
+                _ => {
+                    // errors.push(SettingsDiagnostic::unknown_variant(
+                    //     node.name().value().to_string(),
+                    //     &["env"],
+                    //     node.span(),
+                    // ));
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+
+        Ok(Settings { env: env_map, env_inherited_keys })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EnvironmentItem {
+    pub key: String,
+    pub expanded: env::ExpandValue,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnvironmentItemSpan {
+    pub key: SourceSpan,
+    pub value: SourceSpan,
+}
+
+impl EnvironmentItem {
+    pub fn from_kdl_node(
+        node: &KdlNode,
+        env: &IndexMap<String, String>,
+    ) -> Result<(Self, EnvironmentItemSpan), KdlDiagnostic> {
+        let mut entries = node.entries().iter();
+        match entries.next() {
+            None => {
+                return Err(diag!(
+                    node.span(),
+                    message = "enviroment node requires at least one property entry"
+                ));
+            }
+            Some(entry) => match entry.name() {
+                None => {
+                    return Err(diag!(
+                        entry.span(),
+                        message = "environment node first entry must be a property"
+                    ));
+                }
+                Some(name_id) => {
+                    let key = name_id.value().to_string();
+                    match env::expand(&String::from_kdl_entry(entry)?, env) {
+                        Err(e) => {
+                            let eq_and_left_quote_len = 2;
+                            let property_value_offset = entry.span().offset()
+                                + name_id.span().len()
+                                + eq_and_left_quote_len;
+                            let offset = property_value_offset + e.offset;
+                            let value_span: SourceSpan = (offset, e.len).into();
+                            // dbg!(entry.span(), name_id.span(), (e.offset, e.len), value_span);
+                            return Err(diag!(
+                                value_span,
+                                message = format!("failed to expand env '{}'", e.var),
+                                help = format!(
+                                    "available env vars: {}",
+                                    env.keys().cloned().collect::<Vec<_>>().join(", ")
+                                ),
+                                severity = Severity::Warning
+                            ));
+                        }
+                        Ok(expanded) => {
+                            let item = EnvironmentItem { expanded, key };
+                            let span =
+                                EnvironmentItemSpan { key: name_id.span(), value: entry.span() };
+                            return Ok((item, span));
+                        }
+                    }
+                }
+            },
+        }
+    }
+}
+
+mod kdl_helpers {
+    use kdl::{KdlDiagnostic, KdlEntry};
+
+    #[macro_export]
+    macro_rules! diag {
+    (
+        $span:expr
+        $(, input = $input:expr)?
+        $(, label = $label:expr)?
+        $(, message = $message:expr)?
+        $(, help = $help:expr)?
+        $(,)?
+        , severity = $severity:expr
+    ) => {
+
+        KdlDiagnostic {
+            span: $span,
+            input: std::sync::Arc::new(String::new()) $(.or_else(|| Some($input.to_string())).unwrap_or_default().into())?,
+            label: None $(.or(Some($label.to_string())))?,
+            message: None $(.or(Some($message.to_string())))?,
+            help: None $(.or(Some($help.to_string())))?,
+            severity: $severity,
+        }
+    };
+    (
+        $span:expr
+        $(, input = $input:expr)?
+        $(, label = $label:expr)?
+        $(, message = $message:expr)?
+        $(, help = $help:expr)?
+        $(,)?
+    ) => {
+
+        KdlDiagnostic {
+            span: $span,
+            input: std::sync::Arc::new(String::new()) $(.or_else(|| Some($input.to_string())).unwrap_or_default().into())?,
+            label: None $(.or(Some($label.to_string())))?,
+            message: None $(.or(Some($message.to_string())))?,
+            help: None $(.or(Some($help.to_string())))?,
+            severity: miette::Severity::default(),
+        }
+    };
+
+    }
+
+    macro_rules! bail_on_entry_ty {
+        ( $entry:expr ) => {
+            match $entry.ty() {
+                None => {}
+                Some(identifier) => {
+                    return Err(diag!(
+                        identifier.span(),
+                        message = format!(
+                            "type annotations are not supported on this entry, found: {}",
+                            identifier.value()
+                        )
+                    ))
+                }
+            }
+        };
+    }
+
+    pub fn inspect_entry_ty_name(entry: &KdlEntry) -> &str {
+        match entry.ty() {
+            None => match entry.value() {
+                kdl::KdlValue::String(_) => "string",
+                kdl::KdlValue::Integer(_) => "int",
+                kdl::KdlValue::Float(_) => "float",
+                kdl::KdlValue::Bool(_) => "bool",
+                kdl::KdlValue::Null => "null",
+            },
+            Some(identifier) => identifier.value(),
+        }
+    }
+
+    pub fn inspect_entry_value_span(entry: &KdlEntry) -> miette::SourceSpan {
+        // @see https://github.com/kdl-org/kdl-rs/issues/141
+        match entry.name() {
+            None => entry.span(),
+            Some(name_id) => {
+                let eq_padding = 1; // account for '='
+                let property_value_offset =
+                    entry.span().offset() + name_id.span().len() + eq_padding; // account for '='
+                let property_value_len = entry.span().len() - name_id.span().len() - eq_padding; // account for '='
+                (property_value_offset, property_value_len).into()
+            }
+        }
+    }
+
+    pub trait FromKdlEntry: Sized {
+        fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic>;
+    }
+
+    impl FromKdlEntry for String {
+        fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic> {
+            // dbg!(entry.format());
+            bail_on_entry_ty!(entry);
+            entry.value().as_string().map(|s| s.to_owned()).ok_or_else(|| {
+                diag!(
+                    inspect_entry_value_span(entry),
+                    message = format!(
+                        "invalid type: {}, expected: {}",
+                        inspect_entry_ty_name(entry),
+                        "string"
+                    )
+                )
+            })
+        }
+    }
+}
 
 mod env {
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,6 +325,26 @@ mod env {
         }
         result.push_str(&input[last..]);
         Ok(ExpandValue { value: result, raw: input.to_string(), replacement_count })
+    }
+
+    pub fn base() -> IndexMap<String, String> {
+        let mut env = IndexMap::new();
+        if let Some(user) = std::env::var("USER").ok() {
+            env.insert("USER".to_string(), user);
+        }
+        if let Some(home) = dirs_next::home_dir() {
+            env.insert("HOME".to_string(), home.to_string_lossy().to_string());
+        }
+        if let Some(config) = dirs_next::config_dir() {
+            env.insert("XDG_CONFIG_HOME".to_string(), config.to_string_lossy().to_string());
+        }
+        if let Some(data) = dirs_next::data_dir() {
+            env.insert("XDG_DATA_HOME".to_string(), data.to_string_lossy().to_string());
+        }
+        if let Some(cache) = dirs_next::cache_dir() {
+            env.insert("XDG_CACHE_HOME".to_string(), cache.to_string_lossy().to_string());
+        }
+        env
     }
 }
 

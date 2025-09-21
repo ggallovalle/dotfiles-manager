@@ -54,37 +54,47 @@ impl Dots {
             _ => Verbosity::Verbose,
         };
 
-        Err(DotsError::Settings(crate::settings_error::SettingsError::from_file(
-            // "dotfiles.wsl-archlinux.kdl",
-            path.to_string_lossy(),
-            std::sync::Arc::new("sudo npm".to_string()),
-            vec![
-                crate::settings_error::SettingsDiagnostic::unknown_variant(
-                    "sudo",
-                    &["pacman", "yay", "paru", "apt", "brew", "choco", "winget", "cargo"],
-                    (0, 4),
-                ),
-                crate::settings_error::SettingsDiagnostic::unknown_variant(
-                    "npm",
-                    &["pacman", "yay", "paru", "apt", "brew", "choco", "winget", "cargo"],
-                    (5, 3),
-                ),
-            ],
-        )))
+        // Err(DotsError::Settings(crate::settings_error::SettingsError::from_file(
+        //     // "dotfiles.wsl-archlinux.kdl",
+        //     path.to_string_lossy(),
+        //     std::sync::Arc::new("sudo npm".to_string()),
+        //     vec![
+        //         crate::settings_error::SettingsDiagnostic::unknown_variant(
+        //             "sudo",
+        //             &["pacman", "yay", "paru", "apt", "brew", "choco", "winget", "cargo"],
+        //             (0, 4),
+        //         ),
+        //         crate::settings_error::SettingsDiagnostic::unknown_variant(
+        //             "npm",
+        //             &["pacman", "yay", "paru", "apt", "brew", "choco", "winget", "cargo"],
+        //             (5, 3),
+        //         ),
+        //     ],
+        // )))
 
-        // let contents =
-        //     std::fs::read_to_string(&path).map_err(|_| DotsError::ConfigNotFound(path.clone()))?;
-        // let kdl_doc = kdl::KdlDocument::parse(&contents).map_err(|e| {
-        //     DotsError::Settings(crate::settings_error::SettingsError::from_file(
-        //         path.to_string_lossy(),
-        //         std::sync::Arc::new(contents.clone()),
-        //         e.diagnostics.into_iter().map(|d| {
-        //             crate::settings_error::SettingsDiagnostic::ParseError(d)
-        //         }).collect(),
-        //     ))
-        // })?;
+        let contents =
+            std::fs::read_to_string(&path).map_err(|_| DotsError::ConfigNotFound(path.clone()))?;
+        let kdl_doc = kdl::KdlDocument::parse(&contents).map_err(|e| {
+            DotsError::Settings(crate::settings_error::SettingsError::from_file(
+                path.to_string_lossy(),
+                std::sync::Arc::new(contents.clone()),
+                e.diagnostics
+                    .into_iter()
+                    .map(|d| crate::settings_error::SettingsDiagnostic::ParseError(d))
+                    .collect(),
+            ))
+        })?;
 
-        // Ok(Dots { path, logs: String::new(), dry_run, bundles: the_bundles })
+        let config = crate::settings::Settings::from_kdl(kdl_doc).map_err(|err| {
+            DotsError::Settings(crate::settings_error::SettingsError::from_file(
+                path.to_string_lossy(),
+                std::sync::Arc::new(contents.clone()),
+                err,
+            ))
+        })?;
+        println!("{:#?}", config);
+
+        Ok(Dots { path, logs: String::new(), dry_run, bundles: the_bundles })
     }
 
     fn log(&mut self, msg: String) -> Result<(), DotsError> {
