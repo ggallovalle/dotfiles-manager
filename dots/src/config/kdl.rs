@@ -409,8 +409,13 @@ impl Options {
 
 impl EnvironmentVariables {
     pub fn apply_kdl(&mut self, root: &impl KdlNodeLookup) -> Result<(), ConfigError> {
-        for env_node in root.get_children_named("env") {
-            if let Ok(inherit) = env_node.get_entry_prop_as::<bool>("inherit")
+        for env_node in root.get_children().filter(|n| {
+            let name = n.name().value();
+            name == "export" || name == "env"
+        }) {
+            let name = env_node.name().value();
+            if name == "env"
+                && let Ok(inherit) = env_node.get_entry_prop_as::<bool>("inherit")
                 && let Ok(key) = env_node.get_entry_arg_as::<String>(0)
             {
                 if inherit {
@@ -505,6 +510,15 @@ mod tests {
 
     use super::*;
 
+    macro_rules! kdl_document {
+        ($kdl_str:expr) => {{
+            $kdl_str
+                .parse::<kdl::KdlDocument>()
+                .map_err(|err| miette::Error::new(err).with_source_code($kdl_str))
+                .unwrap()
+        }};
+    }
+
     #[test]
     fn test_options_from_kdl() {
         let kdl_str = r#"
@@ -520,7 +534,7 @@ mod tests {
             // package_managers #true // fail with "must be a string" error
             // package_managers // fail with "canot be empty" error
         "#;
-        let kdl_doc: KdlDocument = kdl_str.parse().unwrap();
+        let kdl_doc = kdl_document!(kdl_str);
         let options = Options::from_kdl(&kdl_doc)
             .map_err(|err| miette::Error::new(err).with_source_code(kdl_str))
             .unwrap();
@@ -536,25 +550,25 @@ mod tests {
             std::env::set_var("GIBRISH_1", "gibrish-1");
         }
         let kdl_str = r#"
-            // env key1 // error: expected key-value pair
-            // env KEY1 12345 // error: invalid type on value
-            // env 12345 VALUE1 // error: invalid type on key
-            // env key1=(time)"value1" // error: invalid type on value
+            // export key1 // error: expected key-value pair
+            // export KEY1 12345 // error: invalid type on value
+            // export 12345 VALUE1 // error: invalid type on key
+            // export key1=(time)"value1" // error: invalid type on value
             // env HOME inherit=12345 // error: invalid type on inherit
 
             env GIBRISH inherit=#true
             env GIBRISH_1 inherit=#false
             env PLAIN inherit=#false
-            env KEY1 "value1"
-            env KEY2 "${KEY1}_suffix"
-            env KEY3="${KEY2}_more"
-            env KEY4="${GIBRISH}_extended"
-            env KEY5 "${GIBRISH_1:-not-inherited}_extended"
-            env KEY6 "${PLAIN:-removed}_extended"
+            export KEY1 "value1"
+            export KEY2 "${KEY1}_suffix"
+            export KEY3="${KEY2}_more"
+            export KEY4="${GIBRISH}_extended"
+            export KEY5 "${GIBRISH_1:-not-inherited}_extended"
+            export KEY6 "${PLAIN:-removed}_extended"
 
             hello "ignored"
         "#;
-        let kdl_doc: KdlDocument = kdl_str.parse().unwrap();
+        let kdl_doc = kdl_document!(kdl_str);
         let mut env = EnvironmentVariables::default();
         env.env.insert("PLAIN".to_string(), "im-plain".to_string());
         env.apply_kdl(&kdl_doc)
@@ -575,7 +589,7 @@ mod tests {
 
             bundle "neovim" { }
         "#;
-        let kdl_doc: KdlDocument = kdl_str.parse().unwrap();
+        let kdl_doc = kdl_document!(kdl_str);
         let bundles = Bundle::from_kdl(&kdl_doc)
             .map_err(|err| miette::Error::new(err).with_source_code(kdl_str))
             .unwrap();
@@ -606,7 +620,7 @@ mod tests {
 
             bundle "neovim" { }
         "#;
-        let kdl_doc: KdlDocument = kdl_str.parse().unwrap();
+        let kdl_doc = kdl_document!(kdl_str);
         let bundles = Bundle::from_kdl(&kdl_doc)
             .map_err(|err| miette::Error::new(err).with_source_code(kdl_str))
             .unwrap();

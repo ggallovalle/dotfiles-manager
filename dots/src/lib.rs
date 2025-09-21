@@ -1,15 +1,15 @@
 #![allow(unused)]
 
+use miette;
 use std::{fmt::Write, path::PathBuf};
 use thiserror::Error;
-use miette;
 
 mod config;
 
 use crate::config::root::PackageManager;
 
 #[derive(Error, Debug, miette::Diagnostic)]
-pub enum DotsError{
+pub enum DotsError {
     #[error("io error: {0}")]
     IO(#[from] std::io::Error),
     #[error("fmt error: {0}")]
@@ -33,7 +33,12 @@ enum Verbosity {
 }
 
 impl Dots {
-    pub fn create(path: PathBuf, dry_run: bool, bundles: Vec<String>, verbosity: u8) -> Result<Self, DotsError> {
+    pub fn create(
+        path: PathBuf,
+        dry_run: bool,
+        bundles: Vec<String>,
+        verbosity: u8,
+    ) -> Result<Self, DotsError> {
         let the_bundles = if bundles.is_empty() { None } else { Some(bundles) };
         let the_verbosity = match verbosity {
             0 => Verbosity::Quiet,
@@ -102,4 +107,3 @@ impl Dots {
         Ok(())
     }
 }
-
