@@ -71,7 +71,8 @@ pub enum NamespaceCommand {
 
 fn main() -> miette::Result<()> {
     let args = Cli::parse();
-    println!("CLI args: {:#?}", args);
+    // println!("CLI args: {:#?}", args);
+    // println!("cwd: {:?}", std::env::current_dir().unwrap());
     let mut dots = Dots::create(args.config, args.dry_run, args.bundles, args.verbose)?;
     match args.command {
         Commands::Doctor => {

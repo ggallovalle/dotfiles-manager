@@ -1,10 +1,12 @@
 #![allow(unused)]
 
+use kdl;
 use miette;
 use std::{fmt::Write, path::PathBuf};
 use thiserror::Error;
 
 mod config;
+mod settings_error;
 
 use crate::config::root::PackageManager;
 
@@ -14,6 +16,11 @@ pub enum DotsError {
     IO(#[from] std::io::Error),
     #[error("fmt error: {0}")]
     Fmt(#[from] std::fmt::Error),
+    #[error("config not found: {0}")]
+    ConfigNotFound(PathBuf),
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Settings(#[from] crate::settings_error::SettingsError),
 }
 
 /// The main crate struct, it contains all needed medata about a
@@ -46,7 +53,37 @@ impl Dots {
             _ => Verbosity::Verbose,
         };
 
-        Ok(Dots { path, logs: String::new(), dry_run, bundles: the_bundles })
+        Err(DotsError::Settings(crate::settings_error::SettingsError::from_file(
+            // "dotfiles.wsl-archlinux.kdl",
+            path.to_string_lossy(),
+            std::sync::Arc::new("sudo npm".to_string()),
+            vec![
+                crate::settings_error::SettingsDiagnostic::unknown_variant(
+                    "sudo",
+                    &["pacman", "yay", "paru", "apt", "brew", "choco", "winget", "cargo"],
+                    (0, 4),
+                ),
+                crate::settings_error::SettingsDiagnostic::unknown_variant(
+                    "npm",
+                    &["pacman", "yay", "paru", "apt", "brew", "choco", "winget", "cargo"],
+                    (5, 3),
+                ),
+            ],
+        )))
+
+        // let contents =
+        //     std::fs::read_to_string(&path).map_err(|_| DotsError::ConfigNotFound(path.clone()))?;
+        // let kdl_doc = kdl::KdlDocument::parse(&contents).map_err(|e| {
+        //     DotsError::Settings(crate::settings_error::SettingsError::from_file(
+        //         path.to_string_lossy(),
+        //         std::sync::Arc::new(contents.clone()),
+        //         e.diagnostics.into_iter().map(|d| {
+        //             crate::settings_error::SettingsDiagnostic::ParseError(d)
+        //         }).collect(),
+        //     ))
+        // })?;
+
+        // Ok(Dots { path, logs: String::new(), dry_run, bundles: the_bundles })
     }
 
     fn log(&mut self, msg: String) -> Result<(), DotsError> {
