@@ -1,3 +1,7 @@
+// dotfiles_dir "${HOME}/playground/dotfiles-link"
+// dotfiles_dir "/root/paru"
+// dotfiles_dir "${HOME}/error.log"
+// dotfiles_dir "${HOME}/.config/dotfiles"
 dotfiles_dir "${HOME}/dotfiles"
 package_manager "paru" "cargo"
 

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::{diag, settings::kdl_helpers::FromKdlEntry, settings_error::SettingsDiagnostic};
 use indexmap::IndexMap;
 use kdl::{KdlDiagnostic, KdlDocument, KdlEntry, KdlNode, KdlValue};
@@ -7,6 +9,7 @@ use miette::{Severity, SourceSpan};
 pub struct Settings {
     env: IndexMap<String, String>,
     env_inherited_keys: Vec<String>,
+    dotfiles_dir: PathBuf,
 }
 
 impl Settings {
@@ -14,6 +17,8 @@ impl Settings {
         let mut errors = Vec::new();
         let mut env_map = env::base();
         let env_inherited_keys = env_map.keys().cloned().collect::<Vec<_>>();
+        let mut dotfiles_dir: Option<(PathBuf)> = None;
+        let mut dotfiles_dir_count: usize = 0;
 
         for node in document.nodes() {
             match node.name().value() {
@@ -25,6 +30,26 @@ impl Settings {
                         errors.push(SettingsDiagnostic::ParseError(e));
                     }
                 },
+                "dotfiles_dir" => match dotfiles_dir_count {
+                    n if n == 1 && dotfiles_dir.is_some() => {
+                        errors.push(SettingsDiagnostic::ParseError(diag!(
+                            node.span(),
+                            message = "dotfiles_dir node can only be specified once"
+                        )));
+                    }
+                    n if n == 0 => {
+                        dotfiles_dir_count += 1;
+                        match parse_dotfiles_dir(node, &env_map) {
+                            Ok(path) => {
+                                dotfiles_dir = Some(path);
+                            }
+                            Err(e) => {
+                                errors.push(SettingsDiagnostic::ParseError(e));
+                            }
+                        }
+                    }
+                    _ => {}
+                },
                 _ => {
                     // errors.push(SettingsDiagnostic::unknown_variant(
                     //     node.name().value().to_string(),
@@ -35,11 +60,45 @@ impl Settings {
             }
         }
 
+        if dotfiles_dir.is_none() && dotfiles_dir_count == 0 {
+            errors.push(SettingsDiagnostic::ParseError(diag!(
+                (document.span().offset(), 0).into(),
+                message = "dotfiles_dir node is required"
+            )));
+        }
+
         if !errors.is_empty() {
             return Err(errors);
         }
 
-        Ok(Settings { env: env_map, env_inherited_keys })
+        Ok(Settings { env: env_map, env_inherited_keys, dotfiles_dir: dotfiles_dir.unwrap() })
+    }
+}
+
+fn parse_dotfiles_dir(
+    node: &KdlNode,
+    env: &IndexMap<String, String>,
+) -> Result<PathBuf, KdlDiagnostic> {
+    let mut entries = node.entries().iter();
+    match entries.next() {
+        None => {
+            return Err(diag!(
+                node.span(),
+                message = "dotfiles_dir node requires at least one entry"
+            ));
+        }
+        Some(entry) => match entry.name() {
+            Some(_) => {
+                return Err(diag!(
+                    entry.span(),
+                    message = "dotfiles_dir node first entry must be an argument, not a property"
+                ));
+            }
+            None => {
+                let value = env::ExpandValue::from_kdl_entry_dir_exists(entry, env)?;
+                Ok(value)
+            }
+        },
     }
 }
 
@@ -53,6 +112,84 @@ pub struct EnvironmentItem {
 pub struct EnvironmentItemSpan {
     pub key: SourceSpan,
     pub value: SourceSpan,
+}
+
+impl env::ExpandValue {
+    pub fn from_kdl_entry(
+        entry: &KdlEntry,
+        env: &IndexMap<String, String>,
+    ) -> Result<Self, KdlDiagnostic> {
+        match env::expand(&String::from_kdl_entry(entry)?, env) {
+            Err(e) => {
+                let name_len = match entry.name() {
+                    None => 0,
+                    Some(name_id) => name_id.span().len(),
+                };
+                let eq_and_left_quote_len = 2;
+                let property_value_offset =
+                    entry.span().offset() + name_len + eq_and_left_quote_len;
+                let offset = property_value_offset + e.offset;
+                let value_span: SourceSpan = (offset, e.len).into();
+                return Err(diag!(
+                    value_span,
+                    message = format!("failed to expand env '{}'", e.var),
+                    help = format!(
+                        "available env vars: {}",
+                        env.keys().cloned().collect::<Vec<_>>().join(", ")
+                    ),
+                    severity = Severity::Warning
+                ));
+            }
+            Ok(expanded) => Ok(expanded),
+        }
+    }
+
+    pub fn from_kdl_entry_dir_exists(
+        entry: &KdlEntry,
+        env: &IndexMap<String, String>,
+    ) -> Result<PathBuf, KdlDiagnostic> {
+        let expanded = Self::from_kdl_entry(entry, env)?;
+        let path = PathBuf::from(&expanded.value);
+        match path.metadata() {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Err(diag!(
+                    kdl_helpers::inspect_entry_value_span(entry),
+                    message = format!("path does not exist: {}", expanded.value),
+                    help = "ensure the path exists, or update the configuration",
+                    severity = Severity::Warning
+                ));
+            }
+            Err(err) => {
+                return Err(diag!(
+                    kdl_helpers::inspect_entry_value_span(entry),
+                    message = format!("failed to access path {}: {}", expanded.value, err),
+                    help =
+                        "check the path permissions or system state, or update the configuration",
+                    severity = Severity::Warning
+                ));
+            }
+            Ok(meta) if !meta.is_dir() => {
+                return Err(diag!(
+                    kdl_helpers::inspect_entry_value_span(entry),
+                    message = format!("path is not a directory: {}", expanded.value),
+                    help = "ensure the path is a directory, or update the configuration",
+                    severity = Severity::Warning
+                ));
+            }
+            Ok(_) => {
+                /* path exists and is a directory */
+            }
+        }
+        // if !path.is_dir() {
+        //     return Err(diag!(
+        //         kdl_helpers::inspect_entry_value_span(entry),
+        //         message = format!("path does not exist or is not a directory: {}", expanded.value),
+        //         help = "ensure the path exists and is a directory, or update the configuration",
+        //         severity = Severity::Warning
+        //     ));
+        // }
+        Ok(path)
+    }
 }
 
 impl EnvironmentItem {
@@ -77,32 +214,10 @@ impl EnvironmentItem {
                 }
                 Some(name_id) => {
                     let key = name_id.value().to_string();
-                    match env::expand(&String::from_kdl_entry(entry)?, env) {
-                        Err(e) => {
-                            let eq_and_left_quote_len = 2;
-                            let property_value_offset = entry.span().offset()
-                                + name_id.span().len()
-                                + eq_and_left_quote_len;
-                            let offset = property_value_offset + e.offset;
-                            let value_span: SourceSpan = (offset, e.len).into();
-                            // dbg!(entry.span(), name_id.span(), (e.offset, e.len), value_span);
-                            return Err(diag!(
-                                value_span,
-                                message = format!("failed to expand env '{}'", e.var),
-                                help = format!(
-                                    "available env vars: {}",
-                                    env.keys().cloned().collect::<Vec<_>>().join(", ")
-                                ),
-                                severity = Severity::Warning
-                            ));
-                        }
-                        Ok(expanded) => {
-                            let item = EnvironmentItem { expanded, key };
-                            let span =
-                                EnvironmentItemSpan { key: name_id.span(), value: entry.span() };
-                            return Ok((item, span));
-                        }
-                    }
+                    let expanded = env::ExpandValue::from_kdl_entry(entry, env)?;
+                    let item = EnvironmentItem { expanded, key };
+                    let span = EnvironmentItemSpan { key: name_id.span(), value: entry.span() };
+                    return Ok((item, span));
                 }
             },
         }
