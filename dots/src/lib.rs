@@ -6,6 +6,7 @@ use std::{fmt::Write, path::PathBuf};
 use thiserror::Error;
 
 mod config;
+mod settings;
 mod settings_error;
 
 use crate::config::root::PackageManager;
