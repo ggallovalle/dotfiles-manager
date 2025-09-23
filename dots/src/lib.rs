@@ -1,16 +1,16 @@
 #![allow(unused)]
 
+use crate::package_manager::PackageManager;
 use kdl;
 use miette;
 use std::{fmt::Write, path::PathBuf};
 use thiserror::Error;
 
-mod config;
+mod env;
+mod kdl_helpers;
 mod package_manager;
 mod settings;
 mod settings_error;
-
-use crate::config::root::PackageManager;
 
 #[derive(Error, Debug, miette::Diagnostic)]
 pub enum DotsError {
