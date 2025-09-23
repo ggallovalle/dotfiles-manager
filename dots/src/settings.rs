@@ -25,6 +25,7 @@ pub struct Settings {
 pub enum BundleItem {
     Install { name: String, span: SourceSpan },
     Copy { source: PathBuf, target: PathBuf, span: SourceSpan },
+    Link { source: PathBuf, target: PathBuf, span: SourceSpan },
     Alias { from: String, to: String, span: SourceSpan },
     Clone { repo: String, target: PathBuf, span: SourceSpan },
     Source { snippet: String, position: Position, shell: Shell, span: SourceSpan },
@@ -151,6 +152,28 @@ impl Settings {
                         let target = kdl_helpers::arg(bundle_item, 1)
                             .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
                         items.push(BundleItem::Copy {
+                            source,
+                            target: PathBuf::from(target.value),
+                            span: bundle_item.span(),
+                        });
+                    }
+                    "ln" => {
+                        // same as cp but creates a symlink instead of copying
+                        let source_entry = kdl_helpers::arg0(bundle_item)?;
+                        let source = dotfiles_dir.join(String::from_kdl_entry(source_entry)?);
+                        if !source.exists() {
+                            return Err(diag!(
+                                source_entry.span(),
+                                message =
+                                    format!("source path does not exist: {}", source.display()),
+                                help = "ensure the source path exists in the dotfiles directory",
+                                severity = Severity::Warning
+                            )
+                            .into());
+                        }
+                        let target = kdl_helpers::arg(bundle_item, 1)
+                            .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
+                        items.push(BundleItem::Link {
                             source,
                             target: PathBuf::from(target.value),
                             span: bundle_item.span(),

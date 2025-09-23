@@ -20,7 +20,7 @@ bundle "zsh" {
     export ZDOTDIR="${XDG_CONFIG_HOME}/zsh"
     install zsh
     cp "zsh/home/dot_zshrc" "${ZDOTDIR}/.zshr"
-    cp "zsh/home/dot_zshenv" "${ZDOTDIR}/.zshenv"
+    ln "zsh/home/dot_zshenv" "${ZDOTDIR}/.zshenv"
 }
 
 // bundle "zsh" // error repeated bundle name
