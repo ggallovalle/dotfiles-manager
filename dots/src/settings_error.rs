@@ -101,6 +101,12 @@ impl fmt::Display for SettingsDiagnostic {
     }
 }
 
+impl From<kdl::KdlDiagnostic> for SettingsDiagnostic {
+    fn from(error: kdl::KdlDiagnostic) -> Self {
+        SettingsDiagnostic::ParseError(error)
+    }
+}
+
 impl Diagnostic for SettingsDiagnostic {
     fn severity(&self) -> Option<miette::Severity> {
         match self {

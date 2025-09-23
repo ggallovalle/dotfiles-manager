@@ -89,7 +89,7 @@ impl Dots {
             DotsError::Settings(crate::settings_error::SettingsError::from_file(
                 path.to_string_lossy(),
                 std::sync::Arc::new(contents.clone()),
-                err,
+                vec![err],
             ))
         })?;
         println!("{:#?}", config);

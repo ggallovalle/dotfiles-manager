@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 
-use crate::{diag, settings::kdl_helpers::FromKdlEntry, settings_error::SettingsDiagnostic};
+use crate::{
+    diag,
+    settings::kdl_helpers::{FromKdlEntry, KdlDocumentExt},
+    settings_error::SettingsDiagnostic,
+};
 use indexmap::IndexMap;
 use kdl::{KdlDiagnostic, KdlDocument, KdlEntry, KdlNode, KdlValue};
 use miette::{Severity, SourceSpan};
@@ -13,65 +17,19 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn from_kdl(document: KdlDocument) -> Result<Self, Vec<SettingsDiagnostic>> {
-        let mut errors = Vec::new();
+    pub fn from_kdl(document: KdlDocument) -> Result<Self, SettingsDiagnostic> {
         let mut env_map = env::base();
         let env_inherited_keys = env_map.keys().cloned().collect::<Vec<_>>();
-        let mut dotfiles_dir: Option<(PathBuf)> = None;
-        let mut dotfiles_dir_count: usize = 0;
+        let dotfiles_dir = document
+            .get_node_required_one("dotfiles_dir")
+            .and_then(|node| parse_dotfiles_dir(node, &env_map))?;
 
-        for node in document.nodes() {
-            match node.name().value() {
-                "export" => match EnvironmentItem::from_kdl_node(node, &env_map) {
-                    Ok((item, span)) => {
-                        env_map.insert(item.key.clone(), item.expanded.value.clone());
-                    }
-                    Err(e) => {
-                        errors.push(SettingsDiagnostic::ParseError(e));
-                    }
-                },
-                "dotfiles_dir" => match dotfiles_dir_count {
-                    n if n == 1 && dotfiles_dir.is_some() => {
-                        errors.push(SettingsDiagnostic::ParseError(diag!(
-                            node.span(),
-                            message = "dotfiles_dir node can only be specified once"
-                        )));
-                    }
-                    n if n == 0 => {
-                        dotfiles_dir_count += 1;
-                        match parse_dotfiles_dir(node, &env_map) {
-                            Ok(path) => {
-                                dotfiles_dir = Some(path);
-                            }
-                            Err(e) => {
-                                errors.push(SettingsDiagnostic::ParseError(e));
-                            }
-                        }
-                    }
-                    _ => {}
-                },
-                _ => {
-                    // errors.push(SettingsDiagnostic::unknown_variant(
-                    //     node.name().value().to_string(),
-                    //     &["env"],
-                    //     node.span(),
-                    // ));
-                }
-            }
+        for node in document.get_children_named("export") {
+            let (item, span) = EnvironmentItem::from_kdl_node(node, &env_map)?;
+            env_map.insert(item.key.clone(), item.expanded.value.clone());
         }
 
-        if dotfiles_dir.is_none() && dotfiles_dir_count == 0 {
-            errors.push(SettingsDiagnostic::ParseError(diag!(
-                (document.span().offset(), 0).into(),
-                message = "dotfiles_dir node is required"
-            )));
-        }
-
-        if !errors.is_empty() {
-            return Err(errors);
-        }
-
-        Ok(Settings { env: env_map, env_inherited_keys, dotfiles_dir: dotfiles_dir.unwrap() })
+        Ok(Settings { env: env_map, env_inherited_keys, dotfiles_dir })
     }
 }
 
@@ -121,17 +79,18 @@ impl env::ExpandValue {
     ) -> Result<Self, KdlDiagnostic> {
         match env::expand(&String::from_kdl_entry(entry)?, env) {
             Err(e) => {
-                let name_len = match entry.name() {
-                    None => 0,
-                    Some(name_id) => name_id.span().len(),
-                };
-                let eq_and_left_quote_len = 2;
-                let property_value_offset =
-                    entry.span().offset() + name_len + eq_and_left_quote_len;
-                let offset = property_value_offset + e.offset;
-                let value_span: SourceSpan = (offset, e.len).into();
+                // NOTE: maybe later, right now this logic doesn't account for comments or spacing
+                // let name_len = match entry.name() {
+                //     None => 0,
+                //     Some(name_id) => name_id.span().len(),
+                // };
+                // let eq_and_left_quote_len = 2;
+                // let property_value_offset =
+                //     entry.span().offset() + name_len + eq_and_left_quote_len;
+                // let offset = property_value_offset + e.offset;
+                // let value_span: SourceSpan = (offset, e.len).into();
                 return Err(diag!(
-                    value_span,
+                    entry.span(),
                     message = format!("failed to expand env '{}'", e.var),
                     help = format!(
                         "available env vars: {}",
@@ -176,9 +135,7 @@ impl env::ExpandValue {
                     severity = Severity::Warning
                 ));
             }
-            Ok(_) => {
-                /* path exists and is a directory */
-            }
+            Ok(_) => { /* path exists and is a directory */ }
         }
         // if !path.is_dir() {
         //     return Err(diag!(
@@ -331,6 +288,45 @@ mod kdl_helpers {
                     )
                 )
             })
+        }
+    }
+
+    pub trait KdlDocumentExt {
+        fn get_span(&self) -> miette::SourceSpan;
+        fn get_children<'a>(&'a self) -> impl Iterator<Item = &'a kdl::KdlNode>;
+        fn get_children_named<'a>(&'a self, name: &str) -> impl Iterator<Item = &'a kdl::KdlNode> {
+            self.get_children().filter(move |n| n.name().value() == name)
+        }
+        fn get_node_required_one(&self, name: &str) -> Result<&kdl::KdlNode, KdlDiagnostic> {
+            let mut found = None;
+            for node in self.get_children() {
+                if node.name().value() == name {
+                    if found.is_some() {
+                        return Err(diag!(
+                            node.span(),
+                            message = format!("node '{}' can only be specified once", name)
+                        ));
+                    }
+                    found = Some(node);
+                }
+            }
+            if found.is_none() {
+                return Err(diag!(
+                    self.get_span(),
+                    message = format!("node '{}' is required", name)
+                ));
+            }
+            Ok(found.unwrap())
+        }
+    }
+
+    impl KdlDocumentExt for kdl::KdlDocument {
+        fn get_span(&self) -> miette::SourceSpan {
+            self.span()
+        }
+
+        fn get_children<'a>(&'a self) -> impl Iterator<Item = &'a kdl::KdlNode> {
+            self.nodes().iter()
         }
     }
 }

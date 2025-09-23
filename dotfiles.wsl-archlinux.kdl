@@ -7,7 +7,7 @@ package_manager "paru" "cargo"
 
 // export // error, empty
 // export "arg" HOME="/home/user" // error, first entry must be property
-// export ZDOTDIR=#true
+// export ZDOTDIR=(fun)/*comment*/#true
 // export /* leading */ ZDOTDIR /* after_key */ =     /* after_eq */      (/*before_ty_name*/bool/*after_ty_name*/) /*after_ty*/ "hello"/* trailing */
 // export ZDOTDIR=(env)          "${XDG_CONFIG_HOME}/zsh" // invalid type
 // export ZDOTDIR=   (source)   "${XDG_CONFIG_HOME}/zsh" // invalid type
