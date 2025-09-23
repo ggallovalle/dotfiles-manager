@@ -3,7 +3,13 @@
 // dotfiles_dir "${HOME}/error.log"
 // dotfiles_dir "${HOME}/.config/dotfiles"
 dotfiles_dir "${HOME}/dotfiles"
-package_manager "paru" "cargo"
+
+// package_managers // error: requires at least one argument
+// package_managers "unknown" "cargo" // error: unknown is not a valid variant
+// package_managers "apt" "cargo" // error: apt not available on Archlinux
+// package_managers "paru" "cargo" "paru" // error: repeated package manager
+// package_managers "paru"
+package_managers "paru" "cargo" "pacman"
 
 // export // error, empty
 // export "arg" HOME="/home/user" // error, first entry must be property
@@ -18,7 +24,9 @@ export BASHCONFIG="mnt/c/user/${USER}/bash"
 
 bundle "zsh" {
     export ZDOTDIR="${XDG_CONFIG_HOME}/zsh"
-    install zsh
+    // install zsh pm=choco
+    install zsh pm=pacman
+    // install zsh
     cp "zsh/home/dot_zshrc" "${ZDOTDIR}/.zshr"
     ln "zsh/home/dot_zshenv" "${ZDOTDIR}/.zshenv"
 }

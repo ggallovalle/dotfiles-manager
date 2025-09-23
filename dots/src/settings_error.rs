@@ -3,6 +3,7 @@ use miette::Diagnostic;
 use miette::LabeledSpan;
 use miette::SourceSpan;
 use std::fmt;
+use std::fmt::Display;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -85,12 +86,7 @@ impl fmt::Display for SettingsDiagnostic {
                 if expected.is_empty() {
                     write!(f, "unknown variant `{}`, there are no variants", variant)
                 } else {
-                    write!(
-                        f,
-                        "unknown variant `{}`, expected {}",
-                        variant,
-                        OneOf { names: expected }
-                    )
+                    write!(f, "unknown variant `{}`, expected {}", variant, OneOf::new(expected))
                 }
             }
             SettingsDiagnostic::ParseError(error) => {
@@ -146,8 +142,27 @@ impl Diagnostic for SettingsDiagnostic {
 /// - expected one of `a`, `b`, `c`
 ///
 /// The slice of names must not be empty.
-struct OneOf {
-    names: &'static [&'static str],
+pub struct OneOf {
+    // names: &'static [&'static str],
+    names: Vec<String>,
+}
+
+impl OneOf {
+    pub fn new(names: &'static [&'static str]) -> Self {
+        OneOf { names: names.iter().map(|s| s.to_string()).collect() }
+    }
+
+    pub fn from_vec(names: Vec<String>) -> Self {
+        OneOf { names }
+    }
+
+    pub fn from_iter<I, S>(names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Display,
+    {
+        OneOf { names: names.into_iter().map(|v| v.to_string()).collect() }
+    }
 }
 
 impl fmt::Display for OneOf {

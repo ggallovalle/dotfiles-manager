@@ -1,11 +1,12 @@
 use crate::{
     config::bundle::Bundle,
     diag,
+    package_manager::PackageManager,
     settings::{
         env::ExpandValue,
         kdl_helpers::{FromKdlEntry, KdlDocumentExt},
     },
-    settings_error::SettingsDiagnostic,
+    settings_error::{OneOf, SettingsDiagnostic},
 };
 use indexmap::IndexMap;
 use kdl::{KdlDiagnostic, KdlDocument, KdlEntry, KdlNode, KdlValue};
@@ -18,12 +19,13 @@ pub struct Settings {
     pub env: IndexMap<String, String>,
     env_inherited_keys: Vec<String>,
     pub dotfiles_dir: PathBuf,
+    pub package_managers: IndexMap<PackageManager, PathBuf>,
     pub bundles: IndexMap<String, Vec<BundleItem>>,
 }
 
 #[derive(Debug, Clone)]
 pub enum BundleItem {
-    Install { name: String, span: SourceSpan },
+    Install { name: String, manager: Option<PackageManager>, span: SourceSpan },
     Copy { source: PathBuf, target: PathBuf, span: SourceSpan },
     Link { source: PathBuf, target: PathBuf, span: SourceSpan },
     Alias { from: String, to: String, span: SourceSpan },
@@ -52,7 +54,7 @@ impl FromKdlEntry for Shell {
             diag!(
                 entry.span(),
                 message = format!("invalid variant: '{}'", value,),
-                help = format!("expected one of: {}", Shell::VARIANTS.join(", "))
+                help = format!("expected {}", OneOf::new(Shell::VARIANTS))
             )
         })
     }
@@ -75,7 +77,20 @@ impl FromKdlEntry for Position {
             diag!(
                 entry.span(),
                 message = format!("invalid variant: '{}'", value,),
-                help = format!("expected one of: {}", Position::VARIANTS.join(", "))
+                help = format!("expected {}", OneOf::new(Position::VARIANTS))
+            )
+        })
+    }
+}
+
+impl FromKdlEntry for PackageManager {
+    fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic> {
+        let value = String::from_kdl_entry(entry)?;
+        value.parse::<PackageManager>().map_err(|_| {
+            diag!(
+                entry.span(),
+                message = format!("invalid variant: '{}'", value,),
+                help = format!("expected {}", OneOf::new(PackageManager::VARIANTS))
             )
         })
     }
@@ -89,6 +104,35 @@ impl Settings {
             .get_node_required_one("dotfiles_dir")
             .and_then(kdl_helpers::arg0)
             .and_then(|entry| env::ExpandValue::from_kdl_entry_dir_exists(entry, &env_map))?;
+
+        let mut package_managers = IndexMap::new();
+        for manager_entry in
+            document.get_node_required_one("package_managers").and_then(kdl_helpers::args)?
+        {
+            let manager = PackageManager::from_kdl_entry(manager_entry)?;
+            match manager.which() {
+                Some(path) => {
+                    if let Some(_) = package_managers.insert(manager.clone(), path) {
+                        return Err(diag!(
+                            manager_entry.span(),
+                            message =
+                                format!("package manager '{}' can only be specified once", manager)
+                        )
+                        .into());
+                    }
+                }
+                None => {
+                    return Err(diag!(
+                        manager_entry.span(),
+                        message =
+                            format!("package manager '{}' not found in PATH", manager.to_string()),
+                        help = "ensure the package manager is installed and available in PATH",
+                        severity = Severity::Warning
+                    )
+                    .into());
+                }
+            }
+        }
 
         env::ExpandValue::apply_exports_to_env(&document, &mut env_map)?;
 
@@ -115,7 +159,25 @@ impl Settings {
                     "install" => {
                         let name =
                             kdl_helpers::arg0(bundle_item).and_then(String::from_kdl_entry)?;
-                        items.push(BundleItem::Install { name, span: bundle_item.span() });
+                        let manager = bundle_item
+                            .entry("pm")
+                            .map(PackageManager::from_kdl_entry)
+                            .transpose()?;
+                        if let Some(mgr) = &manager
+                            && !package_managers.contains_key(mgr)
+                        {
+                            return Err(diag!(
+                                bundle_item.span(),
+                                message = format!(
+                                    "package manager '{}' not defined in package_managers",
+                                    mgr
+                                ),
+                                help = format!("define the package manager in the package_managers node or select {}", OneOf::from_iter(package_managers.keys())),
+                                severity = Severity::Warning
+                            )
+                            .into());
+                        }
+                        items.push(BundleItem::Install { name, manager, span: bundle_item.span() });
                     }
                     "alias" => {
                         let (key, value) = kdl_helpers::prop0(bundle_item)?;
@@ -194,19 +256,20 @@ impl Settings {
                             span: bundle_item.span(),
                         });
                     }
-                    "export" => { /* already handled */}
+                    "export" => { /* already handled */ }
                     _ => {
                         return Err(diag!(
                             bundle_item.span(),
-                            message = format!(
-                                "unknown bundle item: '{}'",
-                                bundle_item.name().value()
-                            ),
+                            message =
+                                format!("unknown bundle item: '{}'", bundle_item.name().value()),
                             help = format!(
-                                "expected one of: {}",
-                                ["install", "cp", "ln", "alias", "clone", "source", "export"].join(", ")
+                                "expected {}",
+                                OneOf::new(&[
+                                    "install", "cp", "ln", "alias", "clone", "source", "export"
+                                ])
                             )
-                        ).into());
+                        )
+                        .into());
                     }
                 }
             }
@@ -214,7 +277,7 @@ impl Settings {
             bundles.insert(bundle_name, items);
         }
 
-        Ok(Settings { env: env_map, env_inherited_keys, dotfiles_dir, bundles })
+        Ok(Settings { env: env_map, env_inherited_keys, dotfiles_dir, bundles, package_managers })
     }
 }
 
@@ -432,6 +495,17 @@ mod kdl_helpers {
             )
         })?;
         Ok(value)
+    }
+
+    pub fn args(node: &kdl::KdlNode) -> Result<impl Iterator<Item = &KdlEntry>, KdlDiagnostic> {
+        let entries = node.entries().iter().filter(|e| e.name().is_none());
+        if entries.clone().count() == 0 {
+            return Err(diag!(
+                node.span(),
+                message = format!("node '{}' requires at least one argument", node.name().value())
+            ));
+        }
+        Ok(entries)
     }
 
     pub trait FromKdlEntry: Sized {
