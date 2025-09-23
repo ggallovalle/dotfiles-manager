@@ -194,7 +194,20 @@ impl Settings {
                             span: bundle_item.span(),
                         });
                     }
-                    _ => {}
+                    "export" => { /* already handled */}
+                    _ => {
+                        return Err(diag!(
+                            bundle_item.span(),
+                            message = format!(
+                                "unknown bundle item: '{}'",
+                                bundle_item.name().value()
+                            ),
+                            help = format!(
+                                "expected one of: {}",
+                                ["install", "cp", "ln", "alias", "clone", "source", "export"].join(", ")
+                            )
+                        ).into());
+                    }
                 }
             }
 
