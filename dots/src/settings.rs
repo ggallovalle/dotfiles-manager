@@ -112,7 +112,7 @@ impl env::ExpandValue {
         match path.metadata() {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 return Err(diag!(
-                    kdl_helpers::inspect_entry_value_span(entry),
+                    entry.span(),
                     message = format!("path does not exist: {}", expanded.value),
                     help = "ensure the path exists, or update the configuration",
                     severity = Severity::Warning
@@ -120,7 +120,7 @@ impl env::ExpandValue {
             }
             Err(err) => {
                 return Err(diag!(
-                    kdl_helpers::inspect_entry_value_span(entry),
+                    entry.span(),
                     message = format!("failed to access path {}: {}", expanded.value, err),
                     help =
                         "check the path permissions or system state, or update the configuration",
@@ -129,7 +129,7 @@ impl env::ExpandValue {
             }
             Ok(meta) if !meta.is_dir() => {
                 return Err(diag!(
-                    kdl_helpers::inspect_entry_value_span(entry),
+                    entry.span(),
                     message = format!("path is not a directory: {}", expanded.value),
                     help = "ensure the path is a directory, or update the configuration",
                     severity = Severity::Warning
@@ -137,14 +137,6 @@ impl env::ExpandValue {
             }
             Ok(_) => { /* path exists and is a directory */ }
         }
-        // if !path.is_dir() {
-        //     return Err(diag!(
-        //         kdl_helpers::inspect_entry_value_span(entry),
-        //         message = format!("path does not exist or is not a directory: {}", expanded.value),
-        //         help = "ensure the path exists and is a directory, or update the configuration",
-        //         severity = Severity::Warning
-        //     ));
-        // }
         Ok(path)
     }
 }
@@ -256,31 +248,16 @@ mod kdl_helpers {
         }
     }
 
-    pub fn inspect_entry_value_span(entry: &KdlEntry) -> miette::SourceSpan {
-        // @see https://github.com/kdl-org/kdl-rs/issues/141
-        match entry.name() {
-            None => entry.span(),
-            Some(name_id) => {
-                let eq_padding = 1; // account for '='
-                let property_value_offset =
-                    entry.span().offset() + name_id.span().len() + eq_padding; // account for '='
-                let property_value_len = entry.span().len() - name_id.span().len() - eq_padding; // account for '='
-                (property_value_offset, property_value_len).into()
-            }
-        }
-    }
-
     pub trait FromKdlEntry: Sized {
         fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic>;
     }
 
     impl FromKdlEntry for String {
         fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic> {
-            // dbg!(entry.format());
             bail_on_entry_ty!(entry);
             entry.value().as_string().map(|s| s.to_owned()).ok_or_else(|| {
                 diag!(
-                    inspect_entry_value_span(entry),
+                    entry.span(),
                     message = format!(
                         "invalid type: {}, expected: {}",
                         inspect_entry_ty_name(entry),
