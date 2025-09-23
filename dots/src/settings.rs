@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
+    config::bundle::Bundle,
     diag,
     settings::{
         env::ExpandValue,
@@ -56,6 +57,58 @@ impl Settings {
             }
             env::ExpandValue::apply_exports_to_env(bundle, &mut env_map)?;
             let mut items = Vec::new();
+
+            for bundle_item in bundle.get_children() {
+                match bundle_item.name().value() {
+                    "install" => {
+                        let name =
+                            kdl_helpers::arg0(bundle_item).and_then(String::from_kdl_entry)?;
+                        items.push(BundleItem::Install { name, span: bundle_item.span() });
+                    }
+                    "alias" => {
+                        let (key, value) = kdl_helpers::prop0(bundle_item)?;
+                        items.push(BundleItem::Alias {
+                            from: key.value().to_string(),
+                            to: String::from_kdl_entry(value)?,
+                            span: bundle_item.span(),
+                        });
+                    }
+                    "clone" => {
+                        let repo =
+                            kdl_helpers::arg0(bundle_item).and_then(String::from_kdl_entry)?;
+                        let target = kdl_helpers::arg(bundle_item, 1)
+                            .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
+                        items.push(BundleItem::Clone {
+                            repo,
+                            target: PathBuf::from(target.value),
+                            span: bundle_item.span(),
+                        });
+                    }
+                    "cp" => {
+                        let source_entry = kdl_helpers::arg0(bundle_item)?;
+                        let source = dotfiles_dir.join(String::from_kdl_entry(source_entry)?);
+                        if !source.exists() {
+                            return Err(diag!(
+                                source_entry.span(),
+                                message =
+                                    format!("source path does not exist: {}", source.display()),
+                                help = "ensure the source path exists in the dotfiles directory",
+                                severity = Severity::Warning
+                            )
+                            .into());
+                        }
+                        let target = kdl_helpers::arg(bundle_item, 1)
+                            .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
+                        items.push(BundleItem::Copy {
+                            source,
+                            target: PathBuf::from(target.value),
+                            span: bundle_item.span(),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+
             bundles.insert(bundle_name, items);
         }
 
@@ -238,6 +291,16 @@ mod kdl_helpers {
         }
     }
 
+    pub fn prop<'a>(node: &'a kdl::KdlNode, key: &str) -> Result<&'a KdlEntry, KdlDiagnostic> {
+        let entry = node.entry(key).ok_or_else(|| {
+            diag!(
+                node.span(),
+                message = format!("node '{}' requires property '{}'", node.name().value(), key)
+            )
+        })?;
+        Ok(entry)
+    }
+
     pub fn arg0(node: &kdl::KdlNode) -> Result<&KdlEntry, KdlDiagnostic> {
         let mut entries = node.entries().iter();
         match entries.next() {
@@ -256,6 +319,16 @@ mod kdl_helpers {
                 None => Ok(entry),
             },
         }
+    }
+
+    pub fn arg(node: &kdl::KdlNode, index: usize) -> Result<&KdlEntry, KdlDiagnostic> {
+        let value = node.entry(index).ok_or_else(|| {
+            diag!(
+                node.span(),
+                message = format!("node '{}' requires argument '{}'", node.name().value(), index + 1)
+            )
+        })?;
+        Ok(value)
     }
 
     pub trait FromKdlEntry: Sized {
