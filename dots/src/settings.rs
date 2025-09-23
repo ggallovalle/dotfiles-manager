@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::{
     config::bundle::Bundle,
     diag,
@@ -12,6 +10,8 @@ use crate::{
 use indexmap::IndexMap;
 use kdl::{KdlDiagnostic, KdlDocument, KdlEntry, KdlNode, KdlValue};
 use miette::{Severity, SourceSpan};
+use std::path::PathBuf;
+use strum::{self, VariantNames};
 
 #[derive(Debug, Clone)]
 pub struct Settings {
@@ -27,6 +27,57 @@ pub enum BundleItem {
     Copy { source: PathBuf, target: PathBuf, span: SourceSpan },
     Alias { from: String, to: String, span: SourceSpan },
     Clone { repo: String, target: PathBuf, span: SourceSpan },
+    Source { snippet: String, position: Position, shell: Shell, span: SourceSpan },
+}
+
+#[derive(Debug, Clone, PartialEq, strum::EnumString, strum::VariantNames)]
+pub enum Shell {
+    #[strum(serialize = "bash")]
+    Bash,
+    #[strum(serialize = "zsh")]
+    Zsh,
+    #[strum(serialize = "fish")]
+    Fish,
+    #[strum(serialize = "pwsh")]
+    PowerShell,
+    #[strum(serialize = "other")]
+    Other,
+}
+
+impl FromKdlEntry for Shell {
+    fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic> {
+        let value = String::from_kdl_entry(entry)?;
+        value.parse::<Shell>().map_err(|_| {
+            diag!(
+                entry.span(),
+                message = format!("invalid variant: '{}'", value,),
+                help = format!("expected one of: {}", Shell::VARIANTS.join(", "))
+            )
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, strum::EnumString, strum::VariantNames)]
+pub enum Position {
+    #[strum(serialize = "start")]
+    Start,
+    #[strum(serialize = "end")]
+    End,
+    #[strum(serialize = "random")]
+    Random,
+}
+
+impl FromKdlEntry for Position {
+    fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic> {
+        let value = String::from_kdl_entry(entry)?;
+        value.parse::<Position>().map_err(|_| {
+            diag!(
+                entry.span(),
+                message = format!("invalid variant: '{}'", value,),
+                help = format!("expected one of: {}", Position::VARIANTS.join(", "))
+            )
+        })
+    }
 }
 
 impl Settings {
@@ -102,6 +153,21 @@ impl Settings {
                         items.push(BundleItem::Copy {
                             source,
                             target: PathBuf::from(target.value),
+                            span: bundle_item.span(),
+                        });
+                    }
+                    "source" => {
+                        let snippet =
+                            kdl_helpers::arg(bundle_item, 0).and_then(String::from_kdl_entry)?;
+                        let shell = kdl_helpers::prop(bundle_item, "shell")
+                            .and_then(Shell::from_kdl_entry)?;
+                        let position = bundle_item
+                            .entry("position")
+                            .map_or(Ok(Position::Random), |e| Position::from_kdl_entry(e))?;
+                        items.push(BundleItem::Source {
+                            snippet,
+                            position,
+                            shell,
                             span: bundle_item.span(),
                         });
                     }
@@ -325,7 +391,8 @@ mod kdl_helpers {
         let value = node.entry(index).ok_or_else(|| {
             diag!(
                 node.span(),
-                message = format!("node '{}' requires argument '{}'", node.name().value(), index + 1)
+                message =
+                    format!("node '{}' requires argument '{}'", node.name().value(), index + 1)
             )
         })?;
         Ok(value)

@@ -28,12 +28,12 @@ bundle "zsh" {
 bundle "shell-pretty" {
     install starship
     cp "starship/config/starship" "${XDG_CONFIG_HOME}/starship"
-    zshrc position=end #"""
+    source #"""
     eval "$(starship init zsh)"
-    """#
-    bashrc position=end #"""
+    """# shell=zsh
+    source position=end #"""
     eval "$(starship init bash)"
-    """#
+    """# shell=other
 
     install lsd
     cp "lsd/config/lsd" "${XDG_CONFIG_HOME}/lsd"
