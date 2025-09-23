@@ -13,7 +13,6 @@ package_manager "paru" "cargo"
 // export ZDOTDIR=   (source)   "${XDG_CONFIG_HOME}/zsh" // invalid type
 // export ZDOTDIR=   (source)   zsh // invalid type
 
-export ZDOTDIR="${XDG_CONFIG_HOME}/zsh"
 // export FISHCONFIG="$HOME/fish"
 export BASHCONFIG="mnt/c/user/${USER}/bash"
 
@@ -23,6 +22,8 @@ bundle "zsh" {
     cp "zsh/home/dot_zshrc" "${ZDOTDIR}/.zshr"
     cp "zsh/home/dot_zshenv" "${ZDOTDIR}/.zshenv"
 }
+
+// bundle "zsh" // error repeated bundle name
 
 bundle "shell-pretty" {
     install starship

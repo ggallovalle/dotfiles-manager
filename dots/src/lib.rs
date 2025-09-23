@@ -22,6 +22,9 @@ pub enum DotsError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Settings(#[from] crate::settings_error::SettingsError),
+    #[error("bundle not found: {0}")]
+    #[diagnostic()]
+    BundleNotFound(String, #[help] String),
 }
 
 /// The main crate struct, it contains all needed medata about a
@@ -92,7 +95,23 @@ impl Dots {
                 vec![err],
             ))
         })?;
-        println!("{:#?}", config);
+        if matches!(the_verbosity, Verbosity::Verbose) {
+            println!("{:#?}", config);
+        }
+        if let Some(bundles) = &the_bundles {
+            for bundle in bundles {
+                if !config.bundles.contains_key(bundle) {
+                    let available_bundles = config
+                        .bundles
+                        .keys()
+                        .map(|k| format!("{}", k))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let message = format!("available bundles: {}", available_bundles);
+                    return Err(DotsError::BundleNotFound(bundle.clone(), message));
+                }
+            }
+        }
 
         Ok(Dots { path, logs: String::new(), dry_run, bundles: the_bundles })
     }

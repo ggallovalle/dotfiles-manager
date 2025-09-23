@@ -71,7 +71,9 @@ pub enum NamespaceCommand {
 
 fn main() -> miette::Result<()> {
     let args = Cli::parse();
-    println!("{:#?}", args);
+    if args.verbose >= 2 {
+        println!("{:#?}", args);
+    }
     // println!("cwd: {:?}", std::env::current_dir().unwrap());
     let mut dots = Dots::create(args.config, args.dry_run, args.bundles, args.verbose)?;
     match args.command {

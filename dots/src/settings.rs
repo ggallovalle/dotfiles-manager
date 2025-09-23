@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use crate::{
     diag,
-    settings::kdl_helpers::{FromKdlEntry, KdlDocumentExt},
+    settings::{
+        env::ExpandValue,
+        kdl_helpers::{FromKdlEntry, KdlDocumentExt},
+    },
     settings_error::SettingsDiagnostic,
 };
 use indexmap::IndexMap;
@@ -11,9 +14,18 @@ use miette::{Severity, SourceSpan};
 
 #[derive(Debug, Clone)]
 pub struct Settings {
-    env: IndexMap<String, String>,
+    pub env: IndexMap<String, String>,
     env_inherited_keys: Vec<String>,
-    dotfiles_dir: PathBuf,
+    pub dotfiles_dir: PathBuf,
+    pub bundles: IndexMap<String, Vec<BundleItem>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum BundleItem {
+    Install { name: String, span: SourceSpan },
+    Copy { source: PathBuf, target: PathBuf, span: SourceSpan },
+    Alias { from: String, to: String, span: SourceSpan },
+    Clone { repo: String, target: PathBuf, span: SourceSpan },
 }
 
 impl Settings {
@@ -22,58 +34,49 @@ impl Settings {
         let env_inherited_keys = env_map.keys().cloned().collect::<Vec<_>>();
         let dotfiles_dir = document
             .get_node_required_one("dotfiles_dir")
-            .and_then(|node| parse_dotfiles_dir(node, &env_map))?;
+            .and_then(kdl_helpers::arg0)
+            .and_then(|entry| env::ExpandValue::from_kdl_entry_dir_exists(entry, &env_map))?;
 
-        for node in document.get_children_named("export") {
-            let (item, span) = EnvironmentItem::from_kdl_node(node, &env_map)?;
-            env_map.insert(item.key.clone(), item.expanded.value.clone());
-        }
+        env::ExpandValue::apply_exports_to_env(&document, &mut env_map)?;
 
-        Ok(Settings { env: env_map, env_inherited_keys, dotfiles_dir })
-    }
-}
+        let mut bundles: IndexMap<String, Vec<BundleItem>> = IndexMap::new();
 
-fn parse_dotfiles_dir(
-    node: &KdlNode,
-    env: &IndexMap<String, String>,
-) -> Result<PathBuf, KdlDiagnostic> {
-    let mut entries = node.entries().iter();
-    match entries.next() {
-        None => {
-            return Err(diag!(
-                node.span(),
-                message = "dotfiles_dir node requires at least one entry"
-            ));
-        }
-        Some(entry) => match entry.name() {
-            Some(_) => {
+        for bundle in document.get_children_named("bundle") {
+            let bundle_name = kdl_helpers::arg0(bundle).and_then(String::from_kdl_entry)?;
+            if bundles.contains_key(&bundle_name) {
                 return Err(diag!(
-                    entry.span(),
-                    message = "dotfiles_dir node first entry must be an argument, not a property"
-                ));
+                    bundle.span(),
+                    message = format!(
+                        "node '{}' with id '{}' can only be specified once",
+                        bundle.name().value(),
+                        bundle_name
+                    )
+                )
+                .into());
             }
-            None => {
-                let value = env::ExpandValue::from_kdl_entry_dir_exists(entry, env)?;
-                Ok(value)
-            }
-        },
+            env::ExpandValue::apply_exports_to_env(bundle, &mut env_map)?;
+            let mut items = Vec::new();
+            bundles.insert(bundle_name, items);
+        }
+
+        Ok(Settings { env: env_map, env_inherited_keys, dotfiles_dir, bundles })
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct EnvironmentItem {
-    pub key: String,
-    pub expanded: env::ExpandValue,
-}
-
-#[derive(Debug, Clone)]
-pub struct EnvironmentItemSpan {
-    pub key: SourceSpan,
-    pub value: SourceSpan,
 }
 
 impl env::ExpandValue {
-    pub fn from_kdl_entry(
+    fn apply_exports_to_env(
+        document: &impl kdl_helpers::KdlDocumentExt,
+        env_map: &mut IndexMap<String, String>,
+    ) -> Result<(), SettingsDiagnostic> {
+        for n in document.get_children_named("export") {
+            let (id, entry) = kdl_helpers::prop0(n)?;
+            let v = env::ExpandValue::from_kdl_entry(entry, env_map)?;
+            env_map.insert(id.value().to_string(), v.value);
+        }
+        Ok(())
+    }
+
+    fn from_kdl_entry(
         entry: &KdlEntry,
         env: &IndexMap<String, String>,
     ) -> Result<Self, KdlDiagnostic> {
@@ -138,38 +141,6 @@ impl env::ExpandValue {
             Ok(_) => { /* path exists and is a directory */ }
         }
         Ok(path)
-    }
-}
-
-impl EnvironmentItem {
-    pub fn from_kdl_node(
-        node: &KdlNode,
-        env: &IndexMap<String, String>,
-    ) -> Result<(Self, EnvironmentItemSpan), KdlDiagnostic> {
-        let mut entries = node.entries().iter();
-        match entries.next() {
-            None => {
-                return Err(diag!(
-                    node.span(),
-                    message = "enviroment node requires at least one property entry"
-                ));
-            }
-            Some(entry) => match entry.name() {
-                None => {
-                    return Err(diag!(
-                        entry.span(),
-                        message = "environment node first entry must be a property"
-                    ));
-                }
-                Some(name_id) => {
-                    let key = name_id.value().to_string();
-                    let expanded = env::ExpandValue::from_kdl_entry(entry, env)?;
-                    let item = EnvironmentItem { expanded, key };
-                    let span = EnvironmentItemSpan { key: name_id.span(), value: entry.span() };
-                    return Ok((item, span));
-                }
-            },
-        }
     }
 }
 
@@ -248,6 +219,45 @@ mod kdl_helpers {
         }
     }
 
+    pub fn prop0(node: &kdl::KdlNode) -> Result<(&kdl::KdlIdentifier, &KdlEntry), KdlDiagnostic> {
+        let mut entries = node.entries().iter();
+        let name = node.name().value();
+        match entries.next() {
+            None => Err(diag!(
+                node.span(),
+                message = format!("node '{}' requires at least one entry", name)
+            )),
+            Some(entry) => match entry.name() {
+                None => Err(diag!(
+                    entry.span(),
+                    message =
+                        format!("node '{}' first entry must be a property, not an argument", name)
+                )),
+                Some(name_id) => Ok((name_id, entry)),
+            },
+        }
+    }
+
+    pub fn arg0(node: &kdl::KdlNode) -> Result<&KdlEntry, KdlDiagnostic> {
+        let mut entries = node.entries().iter();
+        match entries.next() {
+            None => Err(diag!(
+                node.span(),
+                message = format!("node '{}' requires at least one entry", node.name().value())
+            )),
+            Some(entry) => match entry.name() {
+                Some(name_id) => Err(diag!(
+                    name_id.span(),
+                    message = format!(
+                        "node '{}' first entry must be an argument, not a property",
+                        node.name().value()
+                    )
+                )),
+                None => Ok(entry),
+            },
+        }
+    }
+
     pub trait FromKdlEntry: Sized {
         fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic>;
     }
@@ -304,6 +314,19 @@ mod kdl_helpers {
 
         fn get_children<'a>(&'a self) -> impl Iterator<Item = &'a kdl::KdlNode> {
             self.nodes().iter()
+        }
+    }
+
+    impl KdlDocumentExt for kdl::KdlNode {
+        fn get_span(&self) -> miette::SourceSpan {
+            self.span()
+        }
+
+        fn get_children<'a>(&'a self) -> impl Iterator<Item = &'a kdl::KdlNode> {
+            match self.children() {
+                None => either::Left(core::iter::empty()),
+                Some(doc) => either::Right(doc.get_children()),
+            }
         }
     }
 }
