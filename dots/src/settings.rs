@@ -9,6 +9,7 @@ use crate::{
 use indexmap::IndexMap;
 use kdl::{KdlDiagnostic, KdlDocument, KdlEntry, KdlNode, KdlValue};
 use miette::{Severity, SourceSpan};
+use semver;
 use std::path::PathBuf;
 use strum::{self, VariantNames};
 
@@ -23,12 +24,38 @@ pub struct Settings {
 
 #[derive(Debug, Clone)]
 pub enum BundleItem {
-    Install { name: String, manager: Option<PackageManager>, span: SourceSpan },
-    Copy { source: PathBuf, target: PathBuf, span: SourceSpan },
-    Link { source: PathBuf, target: PathBuf, span: SourceSpan },
-    Alias { from: String, to: String, span: SourceSpan },
-    Clone { repo: String, target: PathBuf, span: SourceSpan },
-    Source { snippet: String, position: Position, shell: Shell, span: SourceSpan },
+    Install {
+        name: String,
+        manager: Option<PackageManager>,
+        version: Option<semver::VersionReq>,
+        span: SourceSpan,
+    },
+    Copy {
+        source: PathBuf,
+        target: PathBuf,
+        span: SourceSpan,
+    },
+    Link {
+        source: PathBuf,
+        target: PathBuf,
+        span: SourceSpan,
+    },
+    Alias {
+        from: String,
+        to: String,
+        span: SourceSpan,
+    },
+    Clone {
+        repo: String,
+        target: PathBuf,
+        span: SourceSpan,
+    },
+    Source {
+        snippet: String,
+        position: Position,
+        shell: Shell,
+        span: SourceSpan,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, strum::EnumString, strum::VariantNames)]
@@ -140,7 +167,26 @@ impl Settings {
                             )
                             .into());
                         }
-                        items.push(BundleItem::Install { name, manager, span: bundle_item.span() });
+                        let version = bundle_item
+                            .entry("version")
+                            .map(|e| {
+                                let ver_str = String::from_kdl_entry(e)?;
+                                semver::VersionReq::parse(&ver_str).map_err(|err| {
+                                    diag!(
+                                        e.span(),
+                                        message = format!("invalid version requirement '{}': {}", ver_str, err),
+                                        help = "use a valid semver version requirement, e.g. ^1.2.3, >=1.0.0, etc.",
+                                        severity = Severity::Warning
+                                    )
+                                })
+                            })
+                            .transpose()?;
+                        items.push(BundleItem::Install {
+                            name,
+                            manager,
+                            version,
+                            span: bundle_item.span(),
+                        });
                     }
                     "alias" => {
                         let (key, value) = kdl_helpers::prop0(bundle_item)?;

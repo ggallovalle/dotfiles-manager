@@ -24,8 +24,9 @@ export BASHCONFIG="mnt/c/user/${USER}/bash"
 
 bundle "zsh" {
     export ZDOTDIR="${XDG_CONFIG_HOME}/zsh"
-    // install zsh pm=choco
-    install zsh pm=pacman
+    // install zsh pm=choco // error, choco not available on Archlinux
+    // install zsh pm=pacman version="exo.8.1" // error, invalid version format
+    install zsh pm=pacman version=">=3.8.1"
     // install zsh
     cp "zsh/home/dot_zshrc" "${ZDOTDIR}/.zshr"
     ln "zsh/home/dot_zshenv" "${ZDOTDIR}/.zshenv"
