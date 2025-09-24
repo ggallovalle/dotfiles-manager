@@ -1,9 +1,13 @@
 #![allow(unused)]
 
-use crate::package_manager::PackageManager;
+use crate::{
+    package_manager::PackageManager,
+    settings::Settings,
+    settings_error::{OneOf, SettingsDiagnostic, SettingsError},
+};
 use kdl;
 use miette;
-use std::{fmt::Write, path::PathBuf};
+use std::{fmt::Write, path::PathBuf, sync::Arc};
 use thiserror::Error;
 
 mod env;
@@ -14,8 +18,8 @@ mod settings_error;
 
 #[derive(Error, Debug, miette::Diagnostic)]
 pub enum DotsError {
-    #[error("io error: {0}")]
-    IO(#[from] std::io::Error),
+    // #[error("io error: {0}")]
+    // IO(#[from] std::io::Error),
     #[error("fmt error: {0}")]
     Fmt(#[from] std::fmt::Error),
     #[error("config not found: {0}")]
@@ -51,70 +55,44 @@ impl Dots {
         bundles: Vec<String>,
         verbosity: u8,
     ) -> Result<Self, DotsError> {
-        let the_bundles = if bundles.is_empty() { None } else { Some(bundles) };
         let the_verbosity = match verbosity {
             0 => Verbosity::Quiet,
             1 => Verbosity::Normal,
             _ => Verbosity::Verbose,
         };
 
-        // Err(DotsError::Settings(crate::settings_error::SettingsError::from_file(
-        //     // "dotfiles.wsl-archlinux.kdl",
-        //     path.to_string_lossy(),
-        //     std::sync::Arc::new("sudo npm".to_string()),
-        //     vec![
-        //         crate::settings_error::SettingsDiagnostic::unknown_variant(
-        //             "sudo",
-        //             &["pacman", "yay", "paru", "apt", "brew", "choco", "winget", "cargo"],
-        //             (0, 4),
-        //         ),
-        //         crate::settings_error::SettingsDiagnostic::unknown_variant(
-        //             "npm",
-        //             &["pacman", "yay", "paru", "apt", "brew", "choco", "winget", "cargo"],
-        //             (5, 3),
-        //         ),
-        //     ],
-        // )))
-
-        let contents =
-            std::fs::read_to_string(&path).map_err(|_| DotsError::ConfigNotFound(path.clone()))?;
+        let contents = Arc::new(
+            std::fs::read_to_string(&path).map_err(|_| DotsError::ConfigNotFound(path.clone()))?,
+        );
         let kdl_doc = kdl::KdlDocument::parse(&contents).map_err(|e| {
-            DotsError::Settings(crate::settings_error::SettingsError::from_file(
-                path.to_string_lossy(),
-                std::sync::Arc::new(contents.clone()),
-                e.diagnostics
-                    .into_iter()
-                    .map(|d| crate::settings_error::SettingsDiagnostic::ParseError(d))
-                    .collect(),
+            DotsError::Settings(SettingsError::from_file(
+                &path,
+                contents.clone(),
+                e.diagnostics.into_iter().map(Into::into).collect(),
             ))
         })?;
 
-        let config = crate::settings::Settings::from_kdl(kdl_doc).map_err(|err| {
-            DotsError::Settings(crate::settings_error::SettingsError::from_file(
-                path.to_string_lossy(),
-                std::sync::Arc::new(contents.clone()),
-                vec![err],
-            ))
+        let config = Settings::from_kdl(kdl_doc).map_err(|err| {
+            DotsError::Settings(SettingsError::from_file(&path, contents.clone(), vec![err]))
         })?;
         if matches!(the_verbosity, Verbosity::Verbose) {
             println!("{:#?}", config);
         }
-        if let Some(bundles) = &the_bundles {
-            for bundle in bundles {
-                if !config.bundles.contains_key(bundle) {
-                    let available_bundles = config
-                        .bundles
-                        .keys()
-                        .map(|k| format!("{}", k))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let message = format!("available bundles: {}", available_bundles);
-                    return Err(DotsError::BundleNotFound(bundle.clone(), message));
-                }
+        for bundle in &bundles {
+            if !config.bundles.contains_key(bundle) {
+                return Err(DotsError::BundleNotFound(
+                    bundle.clone(),
+                    format!("expected {}", OneOf::from_iter(config.bundles.keys())),
+                ));
             }
         }
 
-        Ok(Dots { path, logs: String::new(), dry_run, bundles: the_bundles })
+        Ok(Dots {
+            path,
+            logs: String::new(),
+            dry_run,
+            bundles: if bundles.is_empty() { None } else { Some(bundles) },
+        })
     }
 
     fn log(&mut self, msg: String) -> Result<(), DotsError> {

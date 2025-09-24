@@ -4,6 +4,7 @@ use miette::LabeledSpan;
 use miette::SourceSpan;
 use std::fmt;
 use std::fmt::Display;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -20,14 +21,13 @@ impl SettingsError {
     }
 
     pub fn from_file(
-        name: impl Into<String>,
-        input: impl Into<Arc<String>>,
+        name: &PathBuf,
+        input: Arc<String>,
         diagnostics: Vec<SettingsDiagnostic>,
     ) -> Self {
-        let name = name.into();
-        let input = input.into();
-        let named_source =
-            Some(miette::NamedSource::new(name.clone(), input.clone()).with_language("kdl"));
+        let named_source = Some(
+            miette::NamedSource::new(name.to_string_lossy(), input.clone()).with_language("kdl"),
+        );
         SettingsError { input, diagnostics, named_source }
     }
 }
@@ -142,6 +142,7 @@ impl Diagnostic for SettingsDiagnostic {
 /// - expected one of `a`, `b`, `c`
 ///
 /// The slice of names must not be empty.
+#[derive(Debug)]
 pub struct OneOf {
     // names: &'static [&'static str],
     names: Vec<String>,
