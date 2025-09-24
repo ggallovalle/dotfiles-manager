@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use crate::{
-    package_manager::PackageManager,
+    package_manager::ManagerIdentifier,
     settings::Settings,
     settings_error::{OneOf, SettingsDiagnostic, SettingsError},
 };
@@ -103,16 +103,16 @@ impl Dots {
         Ok(())
     }
 
-    fn install(&mut self, name: &str, manager: &PackageManager) -> Result<(), DotsError> {
+    fn install(&mut self, name: &str, manager: &ManagerIdentifier) -> Result<(), DotsError> {
         match manager {
-            PackageManager::ArchPacman => self.log(format!("pacman -S {}", name))?,
-            PackageManager::ArchYay => self.log(format!("yay -S {}", name))?,
-            PackageManager::ArchParu => self.log(format!("paru -S {}", name))?,
-            PackageManager::DebianApt => self.log(format!("apt install {}", name))?,
-            PackageManager::MacBrew => self.log(format!("brew install {}", name))?,
-            PackageManager::WindowsChoco => self.log(format!("choco install {}", name))?,
-            PackageManager::WindowsWinget => self.log(format!("winget install {}", name))?,
-            PackageManager::RustCargo => self.log(format!("cargo install {}", name))?,
+            ManagerIdentifier::ArchPacman => self.log(format!("pacman -S {}", name))?,
+            ManagerIdentifier::ArchYay => self.log(format!("yay -S {}", name))?,
+            ManagerIdentifier::ArchParu => self.log(format!("paru -S {}", name))?,
+            // PackageManager::DebianApt => self.log(format!("apt install {}", name))?,
+            // PackageManager::MacBrew => self.log(format!("brew install {}", name))?,
+            // PackageManager::WindowsChoco => self.log(format!("choco install {}", name))?,
+            // PackageManager::WindowsWinget => self.log(format!("winget install {}", name))?,
+            // PackageManager::RustCargo => self.log(format!("cargo install {}", name))?,
         }
         Ok(())
     }
@@ -125,9 +125,9 @@ impl Dots {
     pub fn dependencies_install(&mut self) -> Result<(), DotsError> {
         self.log("Installing dependencies...".to_string())?;
 
-        self.install("zsh", &PackageManager::ArchPacman)?;
-        self.install("git", &PackageManager::ArchPacman)?;
-        self.install("tealdeer", &PackageManager::RustCargo)?;
+        self.install("zsh", &ManagerIdentifier::ArchPacman)?;
+        self.install("git", &ManagerIdentifier::ArchPacman)?;
+        // self.install("tealdeer", &PackageManager::RustCargo)?;
 
         Ok(())
     }

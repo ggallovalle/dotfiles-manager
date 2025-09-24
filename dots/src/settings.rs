@@ -3,7 +3,7 @@ use crate::{
     env::{self, ExpandValue},
     impl_from_kdl_entry_for_enum,
     kdl_helpers::{self, FromKdlEntry, KdlDocumentExt},
-    package_manager::PackageManager,
+    package_manager::ManagerIdentifier,
     settings_error::{OneOf, SettingsDiagnostic},
 };
 use indexmap::IndexMap;
@@ -18,7 +18,7 @@ pub struct Settings {
     pub env: IndexMap<String, String>,
     env_inherited_keys: Vec<String>,
     pub dotfiles_dir: PathBuf,
-    pub package_managers: IndexMap<PackageManager, PathBuf>,
+    pub package_managers: IndexMap<ManagerIdentifier, PathBuf>,
     pub bundles: IndexMap<String, Vec<BundleItem>>,
 }
 
@@ -26,7 +26,7 @@ pub struct Settings {
 pub enum BundleItem {
     Install {
         name: String,
-        manager: Option<PackageManager>,
+        manager: Option<ManagerIdentifier>,
         version: Option<semver::VersionReq>,
         span: SourceSpan,
     },
@@ -84,7 +84,7 @@ pub enum Position {
 
 impl_from_kdl_entry_for_enum!(Shell);
 impl_from_kdl_entry_for_enum!(Position);
-impl_from_kdl_entry_for_enum!(PackageManager);
+impl_from_kdl_entry_for_enum!(ManagerIdentifier);
 
 impl Settings {
     pub fn from_kdl(document: KdlDocument) -> Result<Self, SettingsDiagnostic> {
@@ -99,7 +99,7 @@ impl Settings {
         for manager_entry in
             document.get_node_required_one("package_managers").and_then(kdl_helpers::args)?
         {
-            let manager = PackageManager::from_kdl_entry(manager_entry)?;
+            let manager = ManagerIdentifier::from_kdl_entry(manager_entry)?;
             match manager.which() {
                 Some(path) => {
                     if let Some(_) = package_managers.insert(manager.clone(), path) {
@@ -151,7 +151,7 @@ impl Settings {
                             kdl_helpers::arg0(bundle_item).and_then(String::from_kdl_entry)?;
                         let manager = bundle_item
                             .entry("pm")
-                            .map(PackageManager::from_kdl_entry)
+                            .map(ManagerIdentifier::from_kdl_entry)
                             .transpose()?;
                         if let Some(mgr) = &manager
                             && !package_managers.contains_key(mgr)
