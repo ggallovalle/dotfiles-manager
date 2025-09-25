@@ -1,0 +1,39 @@
+[package]
+name = "dots"
+version = "0.1.0"
+edition = "2024"
+authors = ["Gerson Gallo <ggallovalle@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/ggallovalle/dotfiles-manager"
+description = """
+A dotfile manager.
+"""
+
+[dependencies]
+lazy_static = "1.5.0"
+
+dirs-next = "2.0.0"
+which = "8.0.0"
+semver = "1.0"
+
+indexmap = "2.11.1"
+regex = "1.11.2"
+either = "1.15.0"
+strum = { version = "0.27", features = ["derive"] }
+
+tracing = "0.1"
+kdl = "6.3.4"
+miette = { version = "7.6.0", features = ["fancy"] }
+thiserror = "2.0.16"
+clap = { version = "4.0", features = ["derive"], optional = true }
+clap_complete = { version = "4", optional = true }
+tracing-subscriber = { version = "0.3", optional = true }
+
+[features]
+cli = ["clap", "clap_complete", "tracing-subscriber"]
+
+[[bin]]
+name = "dots"
+path = "src/bin/dots.rs"
+required-features = ["cli"]

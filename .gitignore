@@ -59,8 +59,6 @@ coverage.xml
 
 # Rust (if using PyO3 or rust extensions)
 target/
-Cargo.lock
-Cargo.toml
 
 # dotenv
 .env
