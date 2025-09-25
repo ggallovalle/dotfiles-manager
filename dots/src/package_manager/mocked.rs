@@ -19,6 +19,14 @@ impl MockedCommandRunner {
     pub fn add_failure(&mut self, stderr: &str) {
         self.responses.push((1, "".to_string(), stderr.to_string()));
     }
+
+    pub fn add_warning(&mut self, stderr: &str) {
+        self.responses.push((0, "".to_string(), stderr.to_string()));
+    }
+
+    pub fn add(&mut self, code: i32, stdout: &str, stderr: &str) {
+        self.responses.push((code, stdout.to_string(), stderr.to_string()));
+    }
 }
 
 impl Default for MockedCommandRunner {
@@ -30,7 +38,7 @@ impl Default for MockedCommandRunner {
 impl CommandRunner for MockedCommandRunner {
     fn execute(&self, _command: Command) -> (i32, String, String) {
         let count = self.call_count.get();
-        if count < self.responses.len() {
+        if !self.responses.is_empty() && count < self.responses.len() {
             let response = self.responses[count].clone();
             self.call_count.set(count + 1);
             response

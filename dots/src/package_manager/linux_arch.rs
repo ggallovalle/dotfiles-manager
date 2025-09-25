@@ -1,17 +1,21 @@
 use std::{
+    fmt::Write,
     path::{Path, PathBuf},
     process::Command,
 };
 
-use crate::package_manager::{CommandRunner, ManagerIdentifier, Manifest, PackageManager};
+use crate::package_manager::{
+    CommandRunner, InstallError, InstallStatus, ManagerIdentifier, Manifest, PackageManager,
+};
 
 pub struct ArchPacman {
     bin: PathBuf,
+    whoami: ManagerIdentifier,
 }
 
 impl ArchPacman {
-    pub fn new(bin: PathBuf) -> Self {
-        Self { bin }
+    pub fn new(whoami: ManagerIdentifier, bin: PathBuf) -> Self {
+        Self { bin, whoami }
     }
 
     pub fn pacman() -> Self {
@@ -19,23 +23,41 @@ impl ArchPacman {
     }
 
     pub fn paru() -> Self {
-        Self { bin: PathBuf::from("/usr/bin/paru") }
+        Self { bin: PathBuf::from("/usr/bin/paru"), whoami: ManagerIdentifier::ArchParu }
     }
 
     pub fn yay() -> Self {
-        Self { bin: PathBuf::from("/usr/bin/yay") }
+        Self { bin: PathBuf::from("/usr/bin/yay"), whoami: ManagerIdentifier::ArchYay }
+    }
+
+    pub fn install_script<W: Write>(
+        &self,
+        list_packages: &[&str],
+        writer: &mut W,
+    ) -> std::fmt::Result {
+        writeln!(
+            writer,
+            "{} -S --noconfirm --needed --noprogressbar {}",
+            self.bin.display(),
+            list_packages.join(" ")
+        )?;
+        Ok(())
     }
 }
 
 impl Default for ArchPacman {
     fn default() -> Self {
-        Self { bin: PathBuf::from("/usr/sbin/pacman") }
+        Self { bin: PathBuf::from("/usr/sbin/pacman"), whoami: ManagerIdentifier::ArchPacman }
     }
 }
 
 impl PackageManager for ArchPacman {
     fn bin(&self) -> &Path {
         &self.bin
+    }
+
+    fn whoami(&self) -> ManagerIdentifier {
+        self.whoami.clone()
     }
 
     fn doctor(&self, runner: &dyn CommandRunner, package: &str) -> Option<Manifest> {
@@ -60,6 +82,31 @@ impl PackageManager for ArchPacman {
             })
         } else {
             None
+        }
+    }
+
+    fn install_version(
+        &self,
+        runner: &dyn CommandRunner,
+        package: &str,
+        _version: &semver::VersionReq,
+    ) -> Result<InstallStatus, InstallError> {
+        let bin = self.bin();
+        let mut command = Command::new(bin);
+        command.arg("-S").arg("--noconfirm").arg("--needed").arg(package);
+        let (code, stdout, stderr) = runner.execute(command);
+
+        match (code, stdout.as_str(), stderr.as_str()) {
+            (0, _, err) if err.contains("skipping") => {
+                Ok(InstallStatus::AlreadyInstalled(Manifest::new(self.whoami(), package)))
+            }
+            (0, out, _) if out.contains("New Version") => {
+                Ok(InstallStatus::Installed(Manifest::new(self.whoami(), package)))
+            }
+            (c, _, err) if c != 0 && err.contains("could not find all required packages") => {
+                Err(InstallError::NotFound(Manifest::new(self.whoami(), package)))
+            }
+            _ => Err(InstallError::Error { code, stdout, stderr }),
         }
     }
 }
@@ -96,5 +143,58 @@ mod tests {
         assert!(manifest.matches_version(star),);
         assert!(manifest.matches_version(star_custom),);
         assert!(!manifest.matches_version(version_req),);
+    }
+
+    #[test]
+    // #[ignore]
+    fn test_pacman_install() {
+        let pm = crate::package_manager::linux_arch::ArchPacman::paru();
+        let mut runner = MockedCommandRunner::default();
+
+        // not found
+        // $ paru -S unknown-package
+        // Output {
+        //     status: ExitStatus(
+        //         unix_wait_status(
+        //             256,
+        //         ),
+        //     ),
+        //     stdout: ":: Resolving dependencies...\n",
+        //     stderr: "error: could not find all required packages:\n    unknown-package (target)\n",
+        // }
+        runner.add_failure(
+            "error: could not find all required packages:\n    unknown-package (target)\n",
+        );
+        let code = pm.install(&runner, "unknown-package");
+        assert!(matches!(code, Err(InstallError::NotFound(_))));
+
+        // already installed
+        // $ paru -S fish
+        // Output {
+        //     status: ExitStatus(
+        //         unix_wait_status(
+        //             0,
+        //         ),
+        //     ),
+        //     stdout: " there is nothing to do\n",
+        //     stderr: "warning: fish-4.0.8-1 is up to date -- skipping\n",
+        // }
+        runner.add_warning("warning: fish-4.0.8-1 is up to date -- skipping\n");
+        let code = pm.install(&runner, "fish");
+        assert!(matches!(code, Ok(InstallStatus::AlreadyInstalled(_))));
+
+        // success (status 0)
+        // stdout
+        // resolving dependencies...
+        // looking for conflicting packages...
+
+        // Package (1)  New Version  Net Change
+
+        // extra/fish   4.0.8-1       21.94 MiB
+
+        // Total Installed Size:  21.94 MiB
+        runner.add_success("resolving dependencies...\nlooking for conflicting packages...\n\nPackage (1)  New Version  Net Change\n\nextra/fish   4.0.8-1       21.94 MiB\n\nTotal Installed Size:  21.94 MiB");
+        let code = pm.install(&runner, "nushell");
+        assert!(matches!(code, Ok(InstallStatus::Installed(_))));
     }
 }

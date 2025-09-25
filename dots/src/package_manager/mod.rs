@@ -47,6 +47,17 @@ pub struct Manifest {
 }
 
 impl Manifest {
+    pub fn new(manager: ManagerIdentifier, id: &str) -> Self {
+        Manifest {
+            name: id.to_string(),
+            id: id.to_string(),
+            manager,
+            version: None,
+            available_versions: None,
+            provides: vec![],
+        }
+    }
+
     pub fn matches_version(&self, req: &semver::VersionReq) -> bool {
         if let Some(installed) = &self.version {
             if req == &semver::VersionReq::STAR {
@@ -86,10 +97,56 @@ impl From<&str> for ManifestVersion {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum InstallStatus {
+    Installed(Manifest),
+    AlreadyInstalled(Manifest),
+}
+
+#[derive(Debug, Clone)]
+pub enum InstallError {
+    VersionMismatch(Manifest),
+    NotFound(Manifest),
+    Error { code: i32, stdout: String, stderr: String },
+}
+
 pub trait PackageManager {
     fn bin(&self) -> &Path;
 
+    fn whoami(&self) -> ManagerIdentifier;
+
     fn doctor(&self, runner: &dyn CommandRunner, package: &str) -> Option<Manifest>;
+
+    fn install_version(
+        &self,
+        runner: &dyn CommandRunner,
+        package: &str,
+        version: &semver::VersionReq,
+    ) -> Result<InstallStatus, InstallError>;
+
+    fn install(
+        &self,
+        runner: &dyn CommandRunner,
+        package: &str,
+    ) -> Result<InstallStatus, InstallError> {
+        self.install_version(runner, package, &semver::VersionReq::STAR)
+    }
+
+    fn install_many(
+        &self,
+        runner: &dyn CommandRunner,
+        packages: &[&str],
+    ) -> impl Iterator<Item = Result<InstallStatus, InstallError>> {
+        packages.iter().map(|pkg| self.install(runner, pkg))
+    }
+
+    fn install_many_with_version(
+        &self,
+        runner: &dyn CommandRunner,
+        packages: &[(String, semver::VersionReq)],
+    ) -> impl Iterator<Item = Result<InstallStatus, InstallError>> {
+        packages.iter().map(|(pkg, ver)| self.install_version(runner, pkg, ver))
+    }
 }
 
 pub trait CommandRunner {
@@ -118,4 +175,3 @@ impl CommandRunner for SystemCommandRunner {
         }
     }
 }
-
