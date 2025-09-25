@@ -3,6 +3,8 @@ use clap_complete;
 use dots::Dots;
 use miette;
 use std::path::PathBuf;
+use tracing::{Level, field, span};
+use tracing_subscriber;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -70,11 +72,16 @@ pub enum NamespaceCommand {
 }
 
 fn main() -> miette::Result<()> {
+    tracing_subscriber::fmt::fmt()
+        .json()
+        .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
+        .init();
+
+    let span = span!(Level::INFO, "dots", cli = field::Empty, cwd = ?std::env::current_dir().unwrap(), args = std::env::args().collect::<Vec<_>>().join(" "));
+    let _span_guard = span.enter();
     let args = Cli::parse();
-    if args.verbose >= 2 {
-        println!("{:#?}", args);
-    }
-    // println!("cwd: {:?}", std::env::current_dir().unwrap());
+    span.record("cli", field::debug(&args));
+    tracing::debug!("starting dots");
     let mut dots = Dots::create(args.config, args.dry_run, args.bundles, args.verbose)?;
     match args.command {
         Commands::Doctor => {

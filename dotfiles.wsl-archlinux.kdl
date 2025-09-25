@@ -9,7 +9,7 @@ dotfiles_dir "${HOME}/dotfiles"
 // package_managers "apt" "cargo" // error: apt not available on Archlinux
 // package_managers "paru" "cargo" "paru" // error: repeated package manager
 // package_managers "paru"
-package_managers "paru" "cargo" "pacman"
+package_managers "paru" /-"cargo" "pacman"
 
 // export // error, empty
 // export "arg" HOME="/home/user" // error, first entry must be property

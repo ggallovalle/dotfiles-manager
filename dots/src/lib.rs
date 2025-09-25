@@ -75,9 +75,7 @@ impl Dots {
         let config = Settings::from_kdl(kdl_doc).map_err(|err| {
             DotsError::Settings(SettingsError::from_file(&path, contents.clone(), vec![err]))
         })?;
-        if matches!(the_verbosity, Verbosity::Verbose) {
-            println!("{:#?}", config);
-        }
+        tracing::debug!(?config, "config value");
         for bundle in &bundles {
             if !config.bundles.contains_key(bundle) {
                 return Err(DotsError::BundleNotFound(
