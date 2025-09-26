@@ -46,12 +46,10 @@ pub struct Dots {
 
 impl Dots {
     pub fn create(path: PathBuf, dry_run: bool, bundles: Vec<String>) -> Result<Self, DotsError> {
-        let contents = Arc::new(std::fs::read_to_string(&path).map_err(|_| {
-            tracing::error!("config not found: {}", path.display());
-            DotsError::ConfigNotFound(path.clone())
-        })?);
+        let contents = Arc::new(
+            std::fs::read_to_string(&path).map_err(|_| DotsError::ConfigNotFound(path.clone()))?,
+        );
         let kdl_doc = kdl::KdlDocument::parse(&contents).map_err(|e| {
-            tracing::error!("config is an invalid kdl document: {}", path.display());
             DotsError::Settings(SettingsError::from_file(
                 &path,
                 contents.clone(),
@@ -60,7 +58,6 @@ impl Dots {
         })?;
 
         let config = Settings::from_kdl(kdl_doc).map_err(|err| {
-            tracing::error!("config has herrors: {}", path.display());
             DotsError::Settings(SettingsError::from_file(&path, contents.clone(), vec![err]))
         })?;
         for bundle in &bundles {

@@ -254,7 +254,9 @@ impl Settings {
                         let snippet =
                             kdl_helpers::arg(bundle_item, 0).and_then(String::from_kdl_entry)?;
                         let shell = kdl_helpers::prop(bundle_item, "shell")
+                            .map_err(Into::into)
                             .and_then(Shell::from_kdl_entry)?;
+                        // .map(Shell::from_kdl_entry)?;
                         let position = bundle_item
                             .entry("position")
                             .map_or(Ok(Position::Random), |e| Position::from_kdl_entry(e))?;

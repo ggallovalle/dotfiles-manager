@@ -1,3 +1,4 @@
+use crate::settings_error::SettingsDiagnostic;
 use kdl::{KdlDiagnostic, KdlEntry};
 
 #[macro_export]
@@ -165,15 +166,11 @@ impl FromKdlEntry for String {
 #[macro_export]
 macro_rules! impl_from_kdl_entry_for_enum {
     ($ty:ty) => {
-        impl FromKdlEntry for $ty {
-            fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic> {
+        impl $ty {
+            fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, SettingsDiagnostic> {
                 let value = String::from_kdl_entry(entry)?;
                 value.parse::<$ty>().map_err(|_| {
-                    diag!(
-                        entry.span(),
-                        message = format!("invalid variant: '{}'", value),
-                        help = format!("expected {}", OneOf::new(<$ty>::VARIANTS)),
-                    )
+                    SettingsDiagnostic::unknown_variant(entry.span(), value, <$ty>::VARIANTS)
                 })
             }
         }
