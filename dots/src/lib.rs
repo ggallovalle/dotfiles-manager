@@ -9,6 +9,7 @@ use kdl;
 use miette;
 use std::{fmt::Write, path::PathBuf, sync::Arc};
 use thiserror::Error;
+use valuable;
 
 mod env;
 mod kdl_helpers;
@@ -16,7 +17,7 @@ mod package_manager;
 mod settings;
 mod settings_error;
 
-#[derive(Error, Debug, miette::Diagnostic)]
+#[derive(Error, Debug, miette::Diagnostic, Clone)]
 pub enum DotsError {
     // #[error("io error: {0}")]
     // IO(#[from] std::io::Error),
@@ -40,46 +41,17 @@ pub struct Dots {
     bundles: Option<Vec<String>>,
     logs: String,
     dry_run: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Verbosity {
-    Quiet,
-    Normal,
-    Verbose,
-}
-
-impl Verbosity {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Verbosity::Quiet => "quiet",
-            Verbosity::Normal => "normal",
-            Verbosity::Verbose => "verbose",
-        }
-    }
-}
-
-impl From<u8> for Verbosity {
-    fn from(value: u8) -> Self {
-        match value {
-            0 => Verbosity::Quiet,
-            1 => Verbosity::Normal,
-            _ => Verbosity::Verbose,
-        }
-    }
+    pub config: Settings,
 }
 
 impl Dots {
-    pub fn create(
-        path: PathBuf,
-        dry_run: bool,
-        bundles: Vec<String>,
-        verbosity: Verbosity,
-    ) -> Result<Self, DotsError> {
-        let contents = Arc::new(
-            std::fs::read_to_string(&path).map_err(|_| DotsError::ConfigNotFound(path.clone()))?,
-        );
+    pub fn create(path: PathBuf, dry_run: bool, bundles: Vec<String>) -> Result<Self, DotsError> {
+        let contents = Arc::new(std::fs::read_to_string(&path).map_err(|_| {
+            tracing::error!("config not found: {}", path.display());
+            DotsError::ConfigNotFound(path.clone())
+        })?);
         let kdl_doc = kdl::KdlDocument::parse(&contents).map_err(|e| {
+            tracing::error!("config is an invalid kdl document: {}", path.display());
             DotsError::Settings(SettingsError::from_file(
                 &path,
                 contents.clone(),
@@ -88,9 +60,9 @@ impl Dots {
         })?;
 
         let config = Settings::from_kdl(kdl_doc).map_err(|err| {
+            tracing::error!("config has herrors: {}", path.display());
             DotsError::Settings(SettingsError::from_file(&path, contents.clone(), vec![err]))
         })?;
-        tracing::debug!(?config, "config value");
         for bundle in &bundles {
             if !config.bundles.contains_key(bundle) {
                 return Err(DotsError::BundleNotFound(
@@ -105,6 +77,7 @@ impl Dots {
             logs: String::new(),
             dry_run,
             bundles: if bundles.is_empty() { None } else { Some(bundles) },
+            config,
         })
     }
 
@@ -117,6 +90,7 @@ impl Dots {
     }
 
     fn install(&mut self, name: &str, manager: &ManagerIdentifier) -> Result<(), DotsError> {
+        tracing::info!("installing {} with {}", name, manager);
         match manager {
             ManagerIdentifier::ArchPacman => self.log(format!("pacman -S {}", name))?,
             ManagerIdentifier::ArchYay => self.log(format!("yay -S {}", name))?,

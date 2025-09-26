@@ -3,7 +3,7 @@ use clap_complete;
 use dots::Dots;
 use miette;
 use scopeguard;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 use tracing;
 
 #[derive(Parser, Debug)]
@@ -94,16 +94,25 @@ pub enum NamespaceCommand {
 
 fn main() -> miette::Result<()> {
     let args = Cli::parse();
-    let verbosity: dots::Verbosity = args.verbose.into();
+    let verbosity = if args.dry_run {
+        Some(tracing::Level::DEBUG)
+    } else {
+        match args.verbose {
+            0 => None,
+            1 => Some(tracing::Level::INFO),
+            2 => Some(tracing::Level::DEBUG),
+            _ => Some(tracing::Level::TRACE),
+        }
+    };
     let _guard_tracing = init_tracing(&verbosity);
 
     let span = tracing::span!(
-        tracing::Level::INFO,
+        tracing::Level::DEBUG,
         "cli",
         cli.bundles = tracing::field::valuable(&args.bundles),
         cli.config = args.config.to_str(),
         cli.dry_run = args.dry_run,
-        cli.verbose = verbosity.as_str(),
+        cli.verbosity = tracing::field::debug(&verbosity),
         cli.command = args.command.as_str(),
         cwd = std::env::current_dir().unwrap().to_str(),
         args = std::env::args().collect::<Vec<_>>().join(" ")
@@ -117,18 +126,18 @@ fn main() -> miette::Result<()> {
             let name = cmd.get_name().to_string();
             clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
         }
-        _ => match execute(args, verbosity.clone()) {
+        _ => match execute(args) {
             Ok(_) => {}
             Err(e) => {
-                if matches!(verbosity, dots::Verbosity::Quiet) {
+                if verbosity.is_none() {
                     let mut latest_log = get_logs_dir();
                     latest_log.push("dots-latest.log");
-
                     println!(
                         "the operation failed, see the latest log file at '{}' for details",
                         latest_log.display()
                     );
                 }
+                tracing::error!(error = %e);
                 return Err(e.into());
             }
         },
@@ -137,8 +146,18 @@ fn main() -> miette::Result<()> {
     Ok(())
 }
 
-fn execute(args: Cli, verbosity: dots::Verbosity) -> Result<(), dots::DotsError> {
-    let mut dots = Dots::create(args.config, args.dry_run, args.bundles, verbosity)?;
+fn execute(args: Cli) -> Result<(), dots::DotsError> {
+    let mut dots = Dots::create(args.config, args.dry_run, args.bundles)?;
+    let span = tracing::span!(
+        tracing::Level::DEBUG,
+        "config",
+        config.dotfiles_dir = dots.config.dotfiles_dir.to_str(),
+        config.env =
+            tracing::field::valuable(&dots.config.env.as_slice().iter().collect::<HashMap<_, _>>()),
+        config.bundles = tracing::field::valuable(&dots.config.bundles.keys().collect::<Vec<_>>()),
+    );
+    let _span_guard = span.enter();
+
     match args.command {
         Commands::Doctor => {
             dots.dependencies_doctor()?;
@@ -191,10 +210,10 @@ fn get_logs_dir() -> PathBuf {
     logs_dir
 }
 
-fn init_tracing(verbosity: &dots::Verbosity) -> scopeguard::ScopeGuard<(), impl FnOnce(())> {
+fn init_tracing(verbosity: &Option<tracing::Level>) -> scopeguard::ScopeGuard<(), impl FnOnce(())> {
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
     use tracing_subscriber::fmt::writer::BoxMakeWriter;
-    use tracing_subscriber::{prelude::*, registry::Registry};
+    use tracing_subscriber::prelude::*;
 
     let file_appender = {
         RollingFileAppender::builder()
@@ -217,11 +236,11 @@ fn init_tracing(verbosity: &dots::Verbosity) -> scopeguard::ScopeGuard<(), impl 
         tracing_appender::non_blocking(file)
     };
 
-    let console_layer = {
-        if matches!(verbosity, dots::Verbosity::Quiet) {
-            None
-        } else {
-            let to_stdout = matches!(verbosity, dots::Verbosity::Verbose);
+    let console_layer = match verbosity {
+        None => None,
+        Some(level) => {
+            // info goes to stderr, debug and trace go to stdout
+            let to_stdout = level >= &tracing::Level::DEBUG;
             let stderr_layer = tracing_subscriber::fmt::Layer::default()
                 .with_ansi(to_stdout)
                 .with_thread_ids(to_stdout)
@@ -236,13 +255,17 @@ fn init_tracing(verbosity: &dots::Verbosity) -> scopeguard::ScopeGuard<(), impl 
         }
     };
 
+    let env_filter = tracing_subscriber::filter::EnvFilter::from_default_env().add_directive(
+        format!("dots={}", verbosity.unwrap_or(tracing::Level::WARN)).parse().unwrap(),
+    );
+
     let file_layer = tracing_subscriber::fmt::Layer::default()
         .json()
         .with_current_span(false)
         .fmt_fields(tracing_subscriber::fmt::format::JsonFields::default())
         .with_writer(file_appender.and(latest_appender));
 
-    Registry::default().with(file_layer).with(console_layer).init();
+    tracing_subscriber::registry().with(env_filter).with(file_layer).with(console_layer).init();
 
     let guard = scopeguard::guard((), move |_| {
         drop(latest_appender_guard);
