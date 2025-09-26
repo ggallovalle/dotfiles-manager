@@ -92,11 +92,11 @@ impl Dots {
             ManagerIdentifier::ArchPacman => self.log(format!("pacman -S {}", name))?,
             ManagerIdentifier::ArchYay => self.log(format!("yay -S {}", name))?,
             ManagerIdentifier::ArchParu => self.log(format!("paru -S {}", name))?,
-            // PackageManager::DebianApt => self.log(format!("apt install {}", name))?,
-            // PackageManager::MacBrew => self.log(format!("brew install {}", name))?,
-            // PackageManager::WindowsChoco => self.log(format!("choco install {}", name))?,
-            // PackageManager::WindowsWinget => self.log(format!("winget install {}", name))?,
-            // PackageManager::RustCargo => self.log(format!("cargo install {}", name))?,
+            // ManagerIdentifier::DebianApt => self.log(format!("apt install {}", name))?,
+            // ManagerIdentifier::MacBrew => self.log(format!("brew install {}", name))?,
+            // ManagerIdentifier::WindowsChoco => self.log(format!("choco install {}", name))?,
+            // ManagerIdentifier::WindowsWinget => self.log(format!("winget install {}", name))?,
+            // ManagerIdentifier::RustCargo => self.log(format!("cargo install {}", name))?,
         }
         Ok(())
     }

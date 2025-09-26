@@ -170,7 +170,11 @@ macro_rules! impl_from_kdl_entry_for_enum {
             fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, SettingsDiagnostic> {
                 let value = String::from_kdl_entry(entry)?;
                 value.parse::<$ty>().map_err(|_| {
-                    SettingsDiagnostic::unknown_variant(entry.span(), value, <$ty>::VARIANTS)
+                    SettingsDiagnostic::unknown_variant(
+                        entry.span(),
+                        value,
+                        OneOf::from_iter(<$ty>::VARIANTS),
+                    )
                 })
             }
         }
@@ -179,10 +183,22 @@ macro_rules! impl_from_kdl_entry_for_enum {
 
 pub trait KdlDocumentExt {
     fn get_span(&self) -> miette::SourceSpan;
+
     fn get_children<'a>(&'a self) -> impl Iterator<Item = &'a kdl::KdlNode>;
+
     fn get_children_named<'a>(&'a self, name: &str) -> impl Iterator<Item = &'a kdl::KdlNode> {
         self.get_children().filter(move |n| n.name().value() == name)
     }
+
+    fn get_node(&self, name: &str) -> Option<&kdl::KdlNode> {
+        for node in self.get_children() {
+            if node.name().value() == name {
+                return Some(node);
+            }
+        }
+        None
+    }
+
     fn get_node_required_one(&self, name: &str) -> Result<&kdl::KdlNode, KdlDiagnostic> {
         let mut found = None;
         for node in self.get_children() {
@@ -206,6 +222,10 @@ pub trait KdlDocumentExt {
 impl KdlDocumentExt for kdl::KdlDocument {
     fn get_span(&self) -> miette::SourceSpan {
         self.span()
+    }
+
+    fn get_node(&self, name: &str) -> Option<&kdl::KdlNode> {
+        self.get(name)
     }
 
     fn get_children<'a>(&'a self) -> impl Iterator<Item = &'a kdl::KdlNode> {

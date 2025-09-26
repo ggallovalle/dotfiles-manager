@@ -3,7 +3,7 @@ use crate::{
     env::{self, ExpandValue},
     impl_from_kdl_entry_for_enum,
     kdl_helpers::{self, FromKdlEntry, KdlDocumentExt},
-    package_manager::ManagerIdentifier,
+    package_manager::{self, ManagerIdentifier},
     settings_error::{OneOf, SettingsDiagnostic},
 };
 use indexmap::IndexMap;
@@ -96,10 +96,9 @@ impl Settings {
             .map_err(Into::into)
             .and_then(|entry| env::ExpandValue::from_kdl_entry_dir_exists(entry, &env_map))?;
 
+        let package_managers_node = document.get_node_required_one("package_managers")?;
         let mut package_managers = IndexMap::new();
-        for manager_entry in
-            document.get_node_required_one("package_managers").and_then(kdl_helpers::args)?
-        {
+        for manager_entry in kdl_helpers::args(package_managers_node)? {
             let manager = ManagerIdentifier::from_kdl_entry(manager_entry)?;
             match manager.which() {
                 Some(path) => {
@@ -152,21 +151,17 @@ impl Settings {
                             kdl_helpers::arg0(bundle_item).and_then(String::from_kdl_entry)?;
                         let manager = bundle_item
                             .entry("pm")
-                            .map(ManagerIdentifier::from_kdl_entry)
+                            .map(|e| ManagerIdentifier::from_kdl_entry(e).map(|m| (e, m)))
                             .transpose()?;
-                        if let Some(mgr) = &manager
+                        if let Some((mgr_entry, mgr)) = &manager
                             && !package_managers.contains_key(mgr)
                         {
-                            return Err(diag!(
-                                bundle_item.span(),
-                                message = format!(
-                                    "package manager '{}' not defined in package_managers",
-                                    mgr
-                                ),
-                                help = format!("define the package manager in the package_managers node or select {}", OneOf::from_iter(package_managers.keys())),
-                                severity = Severity::Warning
-                            )
-                            .into());
+                            return Err(SettingsDiagnostic::unknown_variant_reference(
+                                package_managers_node.span(),
+                                mgr_entry.span(),
+                                mgr.to_string(),
+                                OneOf::from_iter(package_managers.keys()),
+                            ));
                         }
                         let version = bundle_item
                             .entry("version")
@@ -184,7 +179,7 @@ impl Settings {
                             .transpose()?;
                         items.push(BundleItem::Install {
                             name,
-                            manager,
+                            manager: manager.map(|(_, m)| m),
                             version,
                             span: bundle_item.span(),
                         });
@@ -265,7 +260,7 @@ impl Settings {
                         return Err(SettingsDiagnostic::unknown_variant(
                             bundle_item.span(),
                             bundle_item.name().value(),
-                            OneOf::new(&[
+                            OneOf::from_iter(&[
                                 "install", "cp", "ln", "alias", "clone", "source", "export",
                             ]),
                         ));
