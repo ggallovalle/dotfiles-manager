@@ -126,39 +126,49 @@ fn main() -> miette::Result<()> {
             let name = cmd.get_name().to_string();
             clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
         }
-        _ => match execute(args) {
-            Ok(_) => {}
-            Err(e) => {
-                if verbosity.is_none() {
-                    let mut latest_log = get_logs_dir();
-                    latest_log.push("dots-latest.log");
-                    println!(
-                        "the operation failed, see the latest log file at '{}' for details",
-                        latest_log.display()
-                    );
-                }
-                tracing::error!(error = %e);
-                return Err(e.into());
-            }
-        },
+        _ => {
+            let mut dots = Dots::create(args.config, args.dry_run, args.bundles)
+                .inspect_err(|e| trace_dots_error(&verbosity, e))?;
+            let span = tracing::span!(
+                tracing::Level::DEBUG,
+                "config",
+                config.dotfiles_dir = dots.config.dotfiles_dir.to_str(),
+                config.env = tracing::field::valuable(
+                    &dots.config.env.as_slice().iter().collect::<HashMap<_, _>>()
+                ),
+                config.bundles =
+                    tracing::field::valuable(&dots.config.bundles.keys().collect::<Vec<_>>()),
+            );
+            let _span_guard = span.enter();
+            execute(args.command, &mut dots).inspect_err(|e| trace_dots_error(&verbosity, e))?;
+        }
     }
 
     Ok(())
 }
 
-fn execute(args: Cli) -> Result<(), dots::DotsError> {
-    let mut dots = Dots::create(args.config, args.dry_run, args.bundles)?;
-    let span = tracing::span!(
-        tracing::Level::DEBUG,
-        "config",
-        config.dotfiles_dir = dots.config.dotfiles_dir.to_str(),
-        config.env =
-            tracing::field::valuable(&dots.config.env.as_slice().iter().collect::<HashMap<_, _>>()),
-        config.bundles = tracing::field::valuable(&dots.config.bundles.keys().collect::<Vec<_>>()),
-    );
-    let _span_guard = span.enter();
+fn trace_dots_error(verbosity: &Option<tracing::Level>, e: &dots::DotsError) {
+    if verbosity.is_none() {
+        let mut latest_log = get_logs_dir();
+        latest_log.push("dots-latest.log");
+        eprintln!("see the latest log file at '{}' for details", latest_log.display());
+    }
+    match e {
+        dots::DotsError::Settings(inner) => {
+            tracing::error!(
+                diagnostics = tracing::field::valuable(&inner.diagnostics_jsonable()),
+                "{}",
+                e
+            );
+        }
+        _ => {
+            tracing::error!("{}", e);
+        }
+    }
+}
 
-    match args.command {
+fn execute(command: Commands, dots: &mut Dots) -> Result<(), dots::DotsError> {
+    match command {
         Commands::Doctor => {
             dots.dependencies_doctor()?;
             dots.dotfiles_doctor()?;
@@ -238,19 +248,9 @@ fn init_tracing(verbosity: &Option<tracing::Level>) -> scopeguard::ScopeGuard<()
 
     let console_layer = match verbosity {
         None => None,
-        Some(level) => {
-            // info goes to stderr, debug and trace go to stdout
-            let to_stdout = level >= &tracing::Level::DEBUG;
+        Some(_) => {
             let stderr_layer = tracing_subscriber::fmt::Layer::default()
-                .with_ansi(to_stdout)
-                .with_thread_ids(to_stdout)
-                .with_thread_names(to_stdout)
-                .with_writer(if to_stdout {
-                    BoxMakeWriter::new(std::io::stdout)
-                } else {
-                    BoxMakeWriter::new(std::io::stderr)
-                });
-
+                .with_writer(BoxMakeWriter::new(std::io::stderr));
             Some(stderr_layer)
         }
     };
