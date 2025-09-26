@@ -3,10 +3,7 @@ use clap_complete;
 use dots::Dots;
 use miette;
 use std::path::PathBuf;
-use tracing::{Level, field, span};
-use tracing_subscriber::{self, fmt::writer::MakeWriterExt};
-use tracing_subscriber::fmt::writer;
-use tracing_appender::rolling::{Rotation, RollingFileAppender};
+use tracing;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -94,45 +91,15 @@ pub enum NamespaceCommand {
     Uninstall,
 }
 
-fn make_trace_writer(verbosity: &dots::Verbosity) -> writer::BoxMakeWriter {
-    let mut data_home = dirs_next::data_dir().unwrap();
-    data_home.push("dots");
-    let base = match verbosity {
-       dots::Verbosity::Verbose => Some(writer::BoxMakeWriter::new(std::io::stdout)),
-        dots::Verbosity::Normal => Some(writer::BoxMakeWriter::new(std::io::stderr)),
-        dots::Verbosity::Quiet => None,
-    };
-
-    // now utc
-    let appender = RollingFileAppender::builder()
-        .rotation(Rotation::MINUTELY)
-        .filename_suffix("dots.log")
-        .max_log_files(5)
-        .build(data_home).unwrap();
-
-    match base {
-        Some(b) => writer::BoxMakeWriter::new(b.and(appender)),
-        None => writer::BoxMakeWriter::new(appender),
-    }
-}
-
 fn main() -> miette::Result<()> {
     let args = Cli::parse();
     let verbosity: dots::Verbosity = args.verbose.into();
-    tracing_subscriber::fmt::fmt()
-        // .json()
-        // .with_current_span(false)
-        .with_ansi(false) // not pretty
-        .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
-        .fmt_fields(tracing_subscriber::fmt::format::JsonFields::default())
-        .with_writer(make_trace_writer(&verbosity))
-        .init();
+    init_tracing(&verbosity);
 
-    let verbosity: dots::Verbosity = args.verbose.into();
-    let span = span!(
-        Level::INFO,
+    let span = tracing::span!(
+        tracing::Level::INFO,
         "cli",
-        cli.bundles = field::valuable(&args.bundles),
+        cli.bundles = tracing::field::valuable(&args.bundles),
         cli.config = args.config.to_str(),
         cli.dry_run = args.dry_run,
         cli.verbose = verbosity.as_str(),
@@ -187,4 +154,47 @@ fn main() -> miette::Result<()> {
     }
 
     Ok(())
+}
+
+fn init_tracing(verbosity: &dots::Verbosity) {
+    use tracing_appender::rolling::{RollingFileAppender, Rotation};
+    use tracing_subscriber::fmt::writer::BoxMakeWriter;
+    use tracing_subscriber::{prelude::*, registry::Registry};
+    let file_appender = {
+        let mut data_home = dirs_next::data_dir().unwrap();
+        data_home.push("dots");
+        RollingFileAppender::builder()
+            .rotation(Rotation::MINUTELY)
+            .filename_suffix("dots.log")
+            .max_log_files(5)
+            .build(data_home)
+            .unwrap()
+    };
+
+    let console_layer = {
+        if matches!(verbosity, dots::Verbosity::Quiet) {
+            None
+        } else {
+            let to_stdout = matches!(verbosity, dots::Verbosity::Verbose);
+            let stderr_layer = tracing_subscriber::fmt::Layer::default()
+                .with_ansi(to_stdout)
+                .with_thread_ids(to_stdout)
+                .with_thread_names(to_stdout)
+                .with_writer(if to_stdout {
+                    BoxMakeWriter::new(std::io::stdout)
+                } else {
+                    BoxMakeWriter::new(std::io::stderr)
+                });
+
+            Some(stderr_layer)
+        }
+    };
+
+    let file_layer = tracing_subscriber::fmt::Layer::default()
+        .json()
+        .with_current_span(false)
+        .fmt_fields(tracing_subscriber::fmt::format::JsonFields::default())
+        .with_writer(file_appender);
+
+    Registry::default().with(file_layer).with(console_layer).init();
 }
