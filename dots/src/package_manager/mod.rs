@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
 use strum::{self, VariantNames};
-use which::which;
+use which;
 
 mod linux_arch;
 mod mocked;
@@ -32,7 +32,7 @@ pub enum ManagerIdentifier {
 impl ManagerIdentifier {
     pub fn which(&self) -> Option<PathBuf> {
         let command = self.to_string();
-        which(command).ok()
+        which::which_global(command).ok()
     }
 }
 

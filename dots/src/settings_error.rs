@@ -84,12 +84,7 @@ pub enum SettingsDiagnostic {
         variant: String,
         expected: OneOf,
         source: KdlItemRef,
-    },
-    UnknownVariantReference {
-        variant: String,
-        expected: OneOf,
-        source: KdlItemRef,
-        source_ref: KdlItemRef,
+        source_ref: Option<KdlItemRef>,
     },
     PathNotFound {
         path: String,
@@ -108,6 +103,7 @@ impl SettingsDiagnostic {
             variant: variant.into(),
             expected: expected.into(),
             source: source.into(),
+            source_ref: None,
         }
     }
 
@@ -117,11 +113,11 @@ impl SettingsDiagnostic {
         expected: impl Into<OneOf>,
         source_ref: impl Into<KdlItemRef>,
     ) -> Self {
-        SettingsDiagnostic::UnknownVariantReference {
+        SettingsDiagnostic::UnknownVariant {
             variant: variant.into(),
             expected: expected.into(),
             source: source.into(),
-            source_ref: source_ref.into(),
+            source_ref: Some(source_ref.into()),
         }
     }
 
@@ -132,9 +128,6 @@ impl SettingsDiagnostic {
     pub fn span(&self) -> SourceSpan {
         match self {
             SettingsDiagnostic::UnknownVariant { source, .. } => source.span_value().clone(),
-            SettingsDiagnostic::UnknownVariantReference { source, .. } => {
-                source.span_value().clone()
-            }
             SettingsDiagnostic::ParseError(error) => error.span.clone(),
             SettingsDiagnostic::PathNotFound { source, .. } => source.span_value().clone(),
         }
@@ -146,8 +139,10 @@ impl SettingsDiagnostic {
 
     fn kind(&self) -> &str {
         match self {
+            SettingsDiagnostic::UnknownVariant { source_ref, .. } if source_ref.is_some() => {
+                "unknown variant reference"
+            }
             SettingsDiagnostic::UnknownVariant { .. } => "unknown variant",
-            SettingsDiagnostic::UnknownVariantReference { .. } => "unknown variant reference",
             SettingsDiagnostic::ParseError(_) => "parse error",
             SettingsDiagnostic::PathNotFound { .. } => "path not found",
         }
@@ -159,16 +154,7 @@ impl std::error::Error for SettingsDiagnostic {}
 impl fmt::Display for SettingsDiagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SettingsDiagnostic::UnknownVariant { variant, expected, source } => {
-                write!(
-                    f,
-                    "unknown variant `{}` at {}, expected {}",
-                    variant,
-                    source.at_value_str(),
-                    expected
-                )
-            }
-            SettingsDiagnostic::UnknownVariantReference { variant, expected, source, .. } => {
+            SettingsDiagnostic::UnknownVariant { variant, expected, source, .. } => {
                 write!(
                     f,
                     "unknown variant `{}` at {}, expected {}",
@@ -208,7 +194,9 @@ impl Diagnostic for SettingsDiagnostic {
             SettingsDiagnostic::UnknownVariant { expected, .. } => {
                 return Some(Box::new(format!("expected {}", expected)));
             }
-            SettingsDiagnostic::UnknownVariantReference { expected, source_ref, .. } => {
+            SettingsDiagnostic::UnknownVariant {
+                expected, source_ref: Some(source_ref), ..
+            } => {
                 return Some(Box::new(format!(
                     "define the variant in the referenced {} or select {}",
                     source_ref.at_str(),
@@ -226,7 +214,7 @@ impl Diagnostic for SettingsDiagnostic {
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
         match self {
             SettingsDiagnostic::ParseError(error) => error.labels(),
-            Self::UnknownVariantReference { source: span, source_ref, .. } => {
+            Self::UnknownVariant { source: span, source_ref: Some(source_ref), .. } => {
                 let here = self.miette_default_label();
                 let reference = LabeledSpan::at(
                     source_ref.span().clone(),
