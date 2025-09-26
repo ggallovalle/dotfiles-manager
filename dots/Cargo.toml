@@ -30,10 +30,11 @@ thiserror = "2.0.16"
 clap = { version = "4.0", features = ["derive"], optional = true }
 clap_complete = { version = "4", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter", "json"]}
+tracing-appender = { version = "0.2.3", optional = true }
 
 [features]
 default = ["cli"]
-cli = ["clap", "clap_complete", "tracing-subscriber"]
+cli = ["clap", "clap_complete", "tracing-subscriber", "tracing-appender"]
 
 [[bin]]
 name = "dots"

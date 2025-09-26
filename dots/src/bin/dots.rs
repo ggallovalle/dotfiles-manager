@@ -4,7 +4,9 @@ use dots::Dots;
 use miette;
 use std::path::PathBuf;
 use tracing::{Level, field, span};
-use tracing_subscriber;
+use tracing_subscriber::{self, fmt::writer::MakeWriterExt};
+use tracing_subscriber::fmt::writer;
+use tracing_appender::rolling::{Rotation, RollingFileAppender};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -92,11 +94,25 @@ pub enum NamespaceCommand {
     Uninstall,
 }
 
-fn make_trace_writer(verbosity: &dots::Verbosity) -> Box<dyn std::io::Write> {
-    if matches!(verbosity, dots::Verbosity::Verbose) {
-        Box::new(std::io::stdout())
-    } else {
-        Box::new(std::io::stderr())
+fn make_trace_writer(verbosity: &dots::Verbosity) -> writer::BoxMakeWriter {
+    let mut data_home = dirs_next::data_dir().unwrap();
+    data_home.push("dots");
+    let base = match verbosity {
+       dots::Verbosity::Verbose => Some(writer::BoxMakeWriter::new(std::io::stdout)),
+        dots::Verbosity::Normal => Some(writer::BoxMakeWriter::new(std::io::stderr)),
+        dots::Verbosity::Quiet => None,
+    };
+
+    // now utc
+    let appender = RollingFileAppender::builder()
+        .rotation(Rotation::MINUTELY)
+        .filename_suffix("dots.log")
+        .max_log_files(5)
+        .build(data_home).unwrap();
+
+    match base {
+        Some(b) => writer::BoxMakeWriter::new(b.and(appender)),
+        None => writer::BoxMakeWriter::new(appender),
     }
 }
 
@@ -104,11 +120,12 @@ fn main() -> miette::Result<()> {
     let args = Cli::parse();
     let verbosity: dots::Verbosity = args.verbose.into();
     tracing_subscriber::fmt::fmt()
-        .json()
-        .with_current_span(false)
+        // .json()
+        // .with_current_span(false)
+        .with_ansi(false) // not pretty
         .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
         .fmt_fields(tracing_subscriber::fmt::format::JsonFields::default())
-        .with_writer(move || make_trace_writer(&verbosity))
+        .with_writer(make_trace_writer(&verbosity))
         .init();
 
     let verbosity: dots::Verbosity = args.verbose.into();
