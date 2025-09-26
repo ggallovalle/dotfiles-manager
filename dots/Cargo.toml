@@ -22,7 +22,8 @@ regex = "1.11.2"
 either = "1.15.0"
 strum = { version = "0.27", features = ["derive"] }
 
-tracing = "0.1"
+tracing = { version = "0.1", features = ["valuable"] }
+valuable = { version = "0.1.1", features = ["derive"] }
 kdl = "6.3.4"
 miette = { version = "7.6.0", features = ["fancy"] }
 thiserror = "2.0.16"

@@ -61,6 +61,27 @@ enum Commands {
     },
 }
 
+impl Commands {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Commands::Doctor => "doctor",
+            Commands::Install => "install",
+            Commands::Uninstall => "uninstall",
+            Commands::Dependencies { command } => match command {
+                NamespaceCommand::Doctor => "dependencies doctor",
+                NamespaceCommand::Install => "dependencies install",
+                NamespaceCommand::Uninstall => "dependencies uninstall",
+            },
+            Commands::Dotfiles { command } => match command {
+                NamespaceCommand::Doctor => "dotfiles doctor",
+                NamespaceCommand::Install => "dotfiles install",
+                NamespaceCommand::Uninstall => "dotfiles uninstall",
+            },
+            Commands::GenerateCompletions { .. } => "generate-completions",
+        }
+    }
+}
+
 #[derive(Subcommand, Debug)]
 pub enum NamespaceCommand {
     /// Test if everything is set up correctly
@@ -71,18 +92,41 @@ pub enum NamespaceCommand {
     Uninstall,
 }
 
+fn make_trace_writer(verbosity: &dots::Verbosity) -> Box<dyn std::io::Write> {
+    if matches!(verbosity, dots::Verbosity::Verbose) {
+        Box::new(std::io::stdout())
+    } else {
+        Box::new(std::io::stderr())
+    }
+}
+
 fn main() -> miette::Result<()> {
+    let args = Cli::parse();
+    let verbosity: dots::Verbosity = args.verbose.into();
     tracing_subscriber::fmt::fmt()
         .json()
+        .with_current_span(false)
         .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
+        .fmt_fields(tracing_subscriber::fmt::format::JsonFields::default())
+        .with_writer(move || make_trace_writer(&verbosity))
         .init();
 
-    let span = span!(Level::INFO, "dots", cli = field::Empty, cwd = ?std::env::current_dir().unwrap(), args = std::env::args().collect::<Vec<_>>().join(" "));
+    let verbosity: dots::Verbosity = args.verbose.into();
+    let span = span!(
+        Level::INFO,
+        "cli",
+        cli.bundles = field::valuable(&args.bundles),
+        cli.config = args.config.to_str(),
+        cli.dry_run = args.dry_run,
+        cli.verbose = verbosity.as_str(),
+        cli.command = args.command.as_str(),
+        cwd = std::env::current_dir().unwrap().to_str(),
+        args = std::env::args().collect::<Vec<_>>().join(" ")
+    );
     let _span_guard = span.enter();
-    let args = Cli::parse();
-    span.record("cli", field::debug(&args));
+
     tracing::debug!("starting dots");
-    let mut dots = Dots::create(args.config, args.dry_run, args.bundles, args.verbose)?;
+    let mut dots = Dots::create(args.config, args.dry_run, args.bundles, verbosity)?;
     match args.command {
         Commands::Doctor => {
             dots.dependencies_doctor()?;

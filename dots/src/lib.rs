@@ -42,10 +42,31 @@ pub struct Dots {
     dry_run: bool,
 }
 
-enum Verbosity {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Verbosity {
     Quiet,
     Normal,
     Verbose,
+}
+
+impl Verbosity {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Verbosity::Quiet => "quiet",
+            Verbosity::Normal => "normal",
+            Verbosity::Verbose => "verbose",
+        }
+    }
+}
+
+impl From<u8> for Verbosity {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Verbosity::Quiet,
+            1 => Verbosity::Normal,
+            _ => Verbosity::Verbose,
+        }
+    }
 }
 
 impl Dots {
@@ -53,14 +74,8 @@ impl Dots {
         path: PathBuf,
         dry_run: bool,
         bundles: Vec<String>,
-        verbosity: u8,
+        verbosity: Verbosity,
     ) -> Result<Self, DotsError> {
-        let the_verbosity = match verbosity {
-            0 => Verbosity::Quiet,
-            1 => Verbosity::Normal,
-            _ => Verbosity::Verbose,
-        };
-
         let contents = Arc::new(
             std::fs::read_to_string(&path).map_err(|_| DotsError::ConfigNotFound(path.clone()))?,
         );
