@@ -1,3 +1,4 @@
+use crate::kdl_helpers::KdlItemRef;
 use kdl;
 use miette::Diagnostic;
 use miette::LabeledSpan;
@@ -82,58 +83,60 @@ pub enum SettingsDiagnostic {
     UnknownVariant {
         variant: String,
         expected: OneOf,
-        span: SourceSpan,
+        source: KdlItemRef,
     },
     UnknownVariantReference {
         variant: String,
         expected: OneOf,
-        span: SourceSpan,
-        span_ref: SourceSpan,
+        source: KdlItemRef,
+        source_ref: KdlItemRef,
     },
     PathNotFound {
         path: String,
-        span: SourceSpan,
+        source: KdlItemRef,
     },
     ParseError(kdl::KdlDiagnostic),
 }
 
 impl SettingsDiagnostic {
     pub fn unknown_variant(
-        span: impl Into<SourceSpan>,
+        source: impl Into<KdlItemRef>,
         variant: impl Into<String>,
         expected: impl Into<OneOf>,
     ) -> Self {
         SettingsDiagnostic::UnknownVariant {
             variant: variant.into(),
             expected: expected.into(),
-            span: span.into(),
+            source: source.into(),
         }
     }
 
     pub fn unknown_variant_reference(
-        span_ref: impl Into<SourceSpan>,
-        span: impl Into<SourceSpan>,
+        source: impl Into<KdlItemRef>,
         variant: impl Into<String>,
         expected: impl Into<OneOf>,
+        source_ref: impl Into<KdlItemRef>,
     ) -> Self {
         SettingsDiagnostic::UnknownVariantReference {
             variant: variant.into(),
             expected: expected.into(),
-            span: span.into(),
-            span_ref: span_ref.into(),
+            source: source.into(),
+            source_ref: source_ref.into(),
         }
     }
 
-    pub fn path_not_found(span: impl Into<SourceSpan>, path: impl Into<String>) -> Self {
-        SettingsDiagnostic::PathNotFound { path: path.into(), span: span.into() }
+    pub fn path_not_found(source: impl Into<KdlItemRef>, path: impl Into<String>) -> Self {
+        SettingsDiagnostic::PathNotFound { path: path.into(), source: source.into() }
     }
 
     pub fn span(&self) -> SourceSpan {
         match self {
-            SettingsDiagnostic::UnknownVariant { span, .. } => span.clone(),
-            SettingsDiagnostic::UnknownVariantReference { span, .. } => span.clone(),
+            SettingsDiagnostic::UnknownVariant { source, .. } => source.span_value().clone(),
+            SettingsDiagnostic::UnknownVariantReference { source, .. } => {
+                source.span_value().clone()
+            }
             SettingsDiagnostic::ParseError(error) => error.span.clone(),
-            SettingsDiagnostic::PathNotFound { span, .. } => span.clone(),
+            SettingsDiagnostic::PathNotFound { source, .. } => source.span_value().clone(),
         }
     }
 
@@ -156,11 +159,23 @@ impl std::error::Error for SettingsDiagnostic {}
 impl fmt::Display for SettingsDiagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SettingsDiagnostic::UnknownVariant { variant, expected, .. } => {
-                write!(f, "unknown variant `{}`, expected {}", variant, expected)
+            SettingsDiagnostic::UnknownVariant { variant, expected, source } => {
+                write!(
+                    f,
+                    "unknown variant `{}` at {}, expected {}",
+                    variant,
+                    source.at_value_str(),
+                    expected
+                )
             }
-            SettingsDiagnostic::UnknownVariantReference { variant, expected, .. } => {
-                write!(f, "unknown variant `{}`, expected {}", variant, expected)
+            SettingsDiagnostic::UnknownVariantReference { variant, expected, source, .. } => {
+                write!(
+                    f,
+                    "unknown variant `{}` at {}, expected {}",
+                    variant,
+                    source.at_value_str(),
+                    expected
+                )
             }
             SettingsDiagnostic::PathNotFound { path, .. } => {
                 write!(f, "path not found: {}", path)
@@ -193,9 +208,10 @@ impl Diagnostic for SettingsDiagnostic {
             SettingsDiagnostic::UnknownVariant { expected, .. } => {
                 return Some(Box::new(format!("expected {}", expected)));
             }
-            SettingsDiagnostic::UnknownVariantReference { expected, .. } => {
+            SettingsDiagnostic::UnknownVariantReference { expected, source_ref, .. } => {
                 return Some(Box::new(format!(
-                    "define the variant in the reference or select {}",
+                    "define the variant in the referenced {} or select {}",
+                    source_ref.at_str(),
                     expected
                 )));
             }
@@ -210,9 +226,12 @@ impl Diagnostic for SettingsDiagnostic {
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
         match self {
             SettingsDiagnostic::ParseError(error) => error.labels(),
-            Self::UnknownVariantReference { span, span_ref, .. } => {
+            Self::UnknownVariantReference { source: span, source_ref, .. } => {
                 let here = self.miette_default_label();
-                let reference = LabeledSpan::at(span_ref.clone(), "reference");
+                let reference = LabeledSpan::at(
+                    source_ref.span().clone(),
+                    format!("reference {}", source_ref.at_str()),
+                );
                 Some(Box::new([here, reference].into_iter()))
             }
             _ => {

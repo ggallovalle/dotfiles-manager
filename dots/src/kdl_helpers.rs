@@ -1,5 +1,6 @@
 use crate::settings_error::SettingsDiagnostic;
 use kdl::{KdlDiagnostic, KdlEntry};
+use miette::SourceSpan;
 
 #[macro_export]
 macro_rules! diag {
@@ -171,7 +172,7 @@ macro_rules! impl_from_kdl_entry_for_enum {
                 let value = String::from_kdl_entry(entry)?;
                 value.parse::<$ty>().map_err(|_| {
                     SettingsDiagnostic::unknown_variant(
-                        entry.span(),
+                        entry,
                         value,
                         OneOf::from_iter(<$ty>::VARIANTS),
                     )
@@ -245,3 +246,102 @@ impl KdlDocumentExt for kdl::KdlNode {
         }
     }
 }
+
+#[derive(Debug, Clone)]
+pub enum KdlItemRef {
+    Document(SourceSpan),
+    Node(SourceSpan),
+    EntryArg { entry: SourceSpan, value: SourceSpan },
+    EntryProp { entry: SourceSpan, key: SourceSpan, value: SourceSpan },
+    Unknown(SourceSpan),
+}
+
+impl KdlItemRef {
+    pub fn at_str(&self) -> &str {
+        match self {
+            KdlItemRef::Document(_) => "document",
+            KdlItemRef::Node(_) => "node",
+            KdlItemRef::EntryArg { .. } => "argument",
+            KdlItemRef::EntryProp { .. } => "property",
+            KdlItemRef::Unknown(_) => "unknown",
+        }
+    }
+
+    pub fn at_value_str(&self) -> &str {
+        match self {
+            KdlItemRef::Document(_) => "document",
+            KdlItemRef::Node(_) => "node",
+            KdlItemRef::EntryArg { .. } => "argument value",
+            KdlItemRef::EntryProp { .. } => "property value",
+            KdlItemRef::Unknown(_) => "unknown",
+        }
+    }
+
+    pub fn span(&self) -> SourceSpan {
+        match self {
+            KdlItemRef::Document(span) => *span,
+            KdlItemRef::Node(span) => *span,
+            KdlItemRef::EntryArg { entry, .. } => *entry,
+            KdlItemRef::EntryProp { entry, .. } => *entry,
+            KdlItemRef::Unknown(span) => *span,
+        }
+    }
+
+    pub fn span_value(&self) -> SourceSpan {
+        match self {
+            KdlItemRef::Document(span) => *span,
+            KdlItemRef::Node(span) => *span,
+            KdlItemRef::EntryArg { value, .. } => *value,
+            KdlItemRef::EntryProp { value, .. } => *value,
+            KdlItemRef::Unknown(span) => *span,
+        }
+    }
+
+    pub fn span_key(&self) -> SourceSpan {
+        match self {
+            KdlItemRef::Document(span) => *span,
+            KdlItemRef::Node(span) => *span,
+            KdlItemRef::EntryArg { entry, .. } => *entry,
+            KdlItemRef::EntryProp { key, .. } => *key,
+            KdlItemRef::Unknown(span) => *span,
+        }
+    }
+}
+
+impl From<&kdl::KdlDocument> for KdlItemRef {
+    fn from(value: &kdl::KdlDocument) -> Self {
+        KdlItemRef::Document(value.span())
+    }
+}
+
+impl From<&kdl::KdlNode> for KdlItemRef {
+    fn from(value: &kdl::KdlNode) -> Self {
+        KdlItemRef::Node(value.span())
+    }
+}
+
+impl From<&kdl::KdlEntry> for KdlItemRef {
+    fn from(value: &kdl::KdlEntry) -> Self {
+        match (value.name(), value.value()) {
+            (Some(name), v) => {
+                let name_span = name.span();
+                let entry_span = value.span();
+                // = and openning " if string
+                // let padding = if v.is_string() { 2 } else { 1 };
+                let padding = 1;
+                let offset = entry_span.offset() + name_span.len() + padding;
+                let len = entry_span.len() - name_span.len() - padding;
+                let value_span = SourceSpan::new(offset.into(), len);
+
+                KdlItemRef::EntryProp { entry: entry_span, key: name_span, value: value_span }
+            }
+            (None, v) => KdlItemRef::EntryArg { entry: value.span(), value: value.span() },
+        }
+    }
+}
+
+// impl From<SourceSpan> for KdlItemRef {
+//     fn from(value: SourceSpan) -> Self {
+//         KdlItemRef::Unknown(value)
+//     }
+// }

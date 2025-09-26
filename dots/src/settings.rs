@@ -153,14 +153,14 @@ impl Settings {
                             .entry("pm")
                             .map(|e| ManagerIdentifier::from_kdl_entry(e).map(|m| (e, m)))
                             .transpose()?;
-                        if let Some((mgr_entry, mgr)) = &manager
+                        if let Some((mgr_entry, ref mgr)) = manager
                             && !package_managers.contains_key(mgr)
                         {
                             return Err(SettingsDiagnostic::unknown_variant_reference(
-                                package_managers_node.span(),
-                                mgr_entry.span(),
+                                mgr_entry,
                                 mgr.to_string(),
                                 OneOf::from_iter(package_managers.keys()),
+                                package_managers_node,
                             ));
                         }
                         let version = bundle_item
@@ -208,7 +208,7 @@ impl Settings {
                         let source = dotfiles_dir.join(String::from_kdl_entry(source_entry)?);
                         if !source.exists() {
                             return Err(SettingsDiagnostic::path_not_found(
-                                source_entry.span(),
+                                source_entry,
                                 source.display().to_string(),
                             ));
                         }
@@ -226,7 +226,7 @@ impl Settings {
                         let source = dotfiles_dir.join(String::from_kdl_entry(source_entry)?);
                         if !source.exists() {
                             return Err(SettingsDiagnostic::path_not_found(
-                                source_entry.span(),
+                                source_entry,
                                 source.display().to_string(),
                             ));
                         }
@@ -258,7 +258,7 @@ impl Settings {
                     "export" => { /* already handled */ }
                     _ => {
                         return Err(SettingsDiagnostic::unknown_variant(
-                            bundle_item.span(),
+                            bundle_item,
                             bundle_item.name().value(),
                             OneOf::from_iter(&[
                                 "install", "cp", "ln", "alias", "clone", "source", "export",
@@ -326,10 +326,7 @@ impl env::ExpandValue {
         let path = PathBuf::from(&expanded.value);
         match path.metadata() {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                return Err(SettingsDiagnostic::path_not_found(
-                    entry.span(),
-                    path.display().to_string(),
-                ));
+                return Err(SettingsDiagnostic::path_not_found(entry, path.display().to_string()));
             }
             Err(err) => {
                 return Err(diag!(
