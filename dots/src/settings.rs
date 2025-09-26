@@ -165,11 +165,11 @@ impl Settings {
                         }
                         let version = bundle_item
                             .entry("version")
-                            .map(|e| {
-                                let ver_str = String::from_kdl_entry(e)?;
+                            .map(|entry| {
+                                let ver_str = String::from_kdl_entry(entry)?;
                                 semver::VersionReq::parse(&ver_str).map_err(|err| {
                                     diag!(
-                                        e.span(),
+                                        entry.span(),
                                         message = format!("invalid version requirement '{}': {}", ver_str, err),
                                         help = "use a valid semver version requirement, e.g. ^1.2.3, >=1.0.0, etc.",
                                         severity = Severity::Warning
@@ -196,6 +196,7 @@ impl Settings {
                         let repo =
                             kdl_helpers::arg0(bundle_item).and_then(String::from_kdl_entry)?;
                         let target = kdl_helpers::arg(bundle_item, 1)
+                            .map_err(Into::into)
                             .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
                         items.push(BundleItem::Clone {
                             repo,
@@ -213,6 +214,7 @@ impl Settings {
                             ));
                         }
                         let target = kdl_helpers::arg(bundle_item, 1)
+                            .map_err(Into::into)
                             .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
                         items.push(BundleItem::Copy {
                             source,
@@ -231,6 +233,7 @@ impl Settings {
                             ));
                         }
                         let target = kdl_helpers::arg(bundle_item, 1)
+                            .map_err(Into::into)
                             .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
                         items.push(BundleItem::Link {
                             source,
@@ -291,28 +294,10 @@ impl env::ExpandValue {
     fn from_kdl_entry(
         entry: &KdlEntry,
         env: &IndexMap<String, String>,
-    ) -> Result<Self, KdlDiagnostic> {
+    ) -> Result<Self, SettingsDiagnostic> {
         match env::expand(&String::from_kdl_entry(entry)?, env) {
             Err(e) => {
-                // NOTE: maybe later, right now this logic doesn't account for comments or spacing
-                // let name_len = match entry.name() {
-                //     None => 0,
-                //     Some(name_id) => name_id.span().len(),
-                // };
-                // let eq_and_left_quote_len = 2;
-                // let property_value_offset =
-                //     entry.span().offset() + name_len + eq_and_left_quote_len;
-                // let offset = property_value_offset + e.offset;
-                // let value_span: SourceSpan = (offset, e.len).into();
-                return Err(diag!(
-                    entry.span(),
-                    message = format!("failed to expand env '{}'", e.var),
-                    help = format!(
-                        "available env vars: {}",
-                        env.keys().cloned().collect::<Vec<_>>().join(", ")
-                    ),
-                    severity = Severity::Warning
-                ));
+                Err(SettingsDiagnostic::unknown_variant(entry, e.var, OneOf::from_iter(env.keys())))
             }
             Ok(expanded) => Ok(expanded),
         }

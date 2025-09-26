@@ -2,6 +2,7 @@
 // dotfiles_dir "/root/paru"
 // dotfiles_dir "${HOME}/error.log"
 // dotfiles_dir "${HOME}/.config/dotfiles"
+// dotfiles_dir "${UNKNOWN}/dotfiles" // error: unknown env var
 dotfiles_dir "${HOME}/dotfiles"
 
 // package_managers // error: requires at least one argument
