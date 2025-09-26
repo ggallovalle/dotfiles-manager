@@ -2,6 +2,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete;
 use dots::Dots;
 use miette;
+use scopeguard;
 use std::path::PathBuf;
 use tracing;
 
@@ -94,7 +95,7 @@ pub enum NamespaceCommand {
 fn main() -> miette::Result<()> {
     let args = Cli::parse();
     let verbosity: dots::Verbosity = args.verbose.into();
-    init_tracing(&verbosity);
+    let _guard_tracing = init_tracing(&verbosity);
 
     let span = tracing::span!(
         tracing::Level::INFO,
@@ -110,6 +111,33 @@ fn main() -> miette::Result<()> {
     let _span_guard = span.enter();
 
     tracing::debug!("starting dots");
+    match args.command {
+        Commands::GenerateCompletions { shell } => {
+            let mut cmd = Cli::command();
+            let name = cmd.get_name().to_string();
+            clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
+        }
+        _ => match execute(args, verbosity.clone()) {
+            Ok(_) => {}
+            Err(e) => {
+                if matches!(verbosity, dots::Verbosity::Quiet) {
+                    let mut latest_log = get_logs_dir();
+                    latest_log.push("dots-latest.log");
+
+                    println!(
+                        "the operation failed, see the latest log file at '{}' for details",
+                        latest_log.display()
+                    );
+                }
+                return Err(e.into());
+            }
+        },
+    }
+
+    Ok(())
+}
+
+fn execute(args: Cli, verbosity: dots::Verbosity) -> Result<(), dots::DotsError> {
     let mut dots = Dots::create(args.config, args.dry_run, args.bundles, verbosity)?;
     match args.command {
         Commands::Doctor => {
@@ -146,29 +174,47 @@ fn main() -> miette::Result<()> {
                 dots.dotfiles_uninstall()?;
             }
         },
-        Commands::GenerateCompletions { shell } => {
-            let mut cmd = Cli::command();
-            let name = cmd.get_name().to_string();
-            clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
-        }
+        _ => { /* handled in main */ }
     }
-
     Ok(())
 }
 
-fn init_tracing(verbosity: &dots::Verbosity) {
+fn get_data_dir() -> PathBuf {
+    let mut data_home = dirs_next::data_dir().unwrap();
+    data_home.push("dots");
+    data_home
+}
+
+fn get_logs_dir() -> PathBuf {
+    let mut logs_dir = get_data_dir();
+    logs_dir.push("logs");
+    logs_dir
+}
+
+fn init_tracing(verbosity: &dots::Verbosity) -> scopeguard::ScopeGuard<(), impl FnOnce(())> {
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
     use tracing_subscriber::fmt::writer::BoxMakeWriter;
     use tracing_subscriber::{prelude::*, registry::Registry};
+
     let file_appender = {
-        let mut data_home = dirs_next::data_dir().unwrap();
-        data_home.push("dots");
         RollingFileAppender::builder()
             .rotation(Rotation::MINUTELY)
             .filename_suffix("dots.log")
             .max_log_files(5)
-            .build(data_home)
+            .build(get_logs_dir())
             .unwrap()
+    };
+
+    let (latest_appender, latest_appender_guard) = {
+        let mut latest_log = get_logs_dir();
+        latest_log.push("dots-latest.log");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(latest_log)
+            .unwrap();
+        tracing_appender::non_blocking(file)
     };
 
     let console_layer = {
@@ -194,7 +240,12 @@ fn init_tracing(verbosity: &dots::Verbosity) {
         .json()
         .with_current_span(false)
         .fmt_fields(tracing_subscriber::fmt::format::JsonFields::default())
-        .with_writer(file_appender);
+        .with_writer(file_appender.and(latest_appender));
 
     Registry::default().with(file_layer).with(console_layer).init();
+
+    let guard = scopeguard::guard((), move |_| {
+        drop(latest_appender_guard);
+    });
+    guard
 }
