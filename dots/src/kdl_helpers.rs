@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use crate::settings_error::SettingsDiagnostic;
 use kdl::{KdlDiagnostic, KdlEntry};
 use miette::SourceSpan;
@@ -188,6 +190,29 @@ where
                 help = format!("use a valid '{}'", std::any::type_name::<T>())
             )
         })
+    }
+}
+
+pub struct KdlBool(pub bool);
+
+impl FromKdlEntry for KdlBool {
+    fn from_kdl_entry_allow_ty(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic> {
+        match entry.value() {
+            kdl::KdlValue::Bool(b) => Ok(KdlBool(*b)),
+            _ => Err(diag!(
+                entry.span(),
+                message =
+                    format!("invalid type: {}, expected: {}", inspect_entry_ty_name(entry), "bool")
+            )),
+        }
+    }
+}
+
+impl Deref for KdlBool {
+    type Target = bool;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 

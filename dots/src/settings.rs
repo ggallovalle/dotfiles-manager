@@ -2,7 +2,7 @@ use crate::{
     diag,
     env::{self, ExpandValue},
     impl_from_kdl_entry_for_enum,
-    kdl_helpers::{self, FromKdlEntry, KdlDocumentExt},
+    kdl_helpers::{self as h, FromKdlEntry, KdlDocumentExt},
     package_manager::{self, ManagerIdentifier},
     settings_error::{OneOf, SettingsDiagnostic},
 };
@@ -92,13 +92,13 @@ impl Settings {
         let env_inherited_keys = env_map.keys().cloned().collect::<Vec<_>>();
         let dotfiles_dir = document
             .get_node_required_one("dotfiles_dir")
-            .and_then(kdl_helpers::arg0)
+            .and_then(h::arg0)
             .map_err(Into::into)
             .and_then(|entry| env::ExpandValue::from_kdl_entry_dir_exists(entry, &env_map))?;
 
         let package_managers_node = document.get_node_required_one("package_managers")?;
         let mut package_managers = IndexMap::new();
-        for manager_entry in kdl_helpers::args(package_managers_node)? {
+        for manager_entry in h::args(package_managers_node)? {
             let manager = ManagerIdentifier::from_kdl_entry(manager_entry)?;
             match manager.which() {
                 Some(path) => {
@@ -129,7 +129,7 @@ impl Settings {
         let mut bundles: IndexMap<String, Vec<BundleItem>> = IndexMap::new();
 
         for bundle in document.get_children_named("bundle") {
-            let bundle_name = kdl_helpers::arg0(bundle).and_then(String::from_kdl_entry)?;
+            let bundle_name = h::arg0(bundle).and_then(String::from_kdl_entry)?;
             if bundles.contains_key(&bundle_name) {
                 return Err(diag!(
                     bundle.span(),
@@ -147,8 +147,7 @@ impl Settings {
             for bundle_item in bundle.get_children() {
                 match bundle_item.name().value() {
                     "install" => {
-                        let name =
-                            kdl_helpers::arg0(bundle_item).and_then(String::from_kdl_entry)?;
+                        let name = h::arg0(bundle_item).and_then(String::from_kdl_entry)?;
                         let manager = bundle_item
                             .entry("pm")
                             .map(ManagerIdentifier::from_kdl_entry_keep)
@@ -175,7 +174,7 @@ impl Settings {
                         });
                     }
                     "alias" => {
-                        let (key, value) = kdl_helpers::prop0(bundle_item)?;
+                        let (key, value) = h::prop0(bundle_item)?;
                         items.push(BundleItem::Alias {
                             from: key.value().to_string(),
                             to: String::from_kdl_entry(value)?,
@@ -183,9 +182,8 @@ impl Settings {
                         });
                     }
                     "clone" => {
-                        let repo =
-                            kdl_helpers::arg0(bundle_item).and_then(String::from_kdl_entry)?;
-                        let target = kdl_helpers::arg(bundle_item, 1)
+                        let repo = h::arg0(bundle_item).and_then(String::from_kdl_entry)?;
+                        let target = h::arg(bundle_item, 1)
                             .map_err(Into::into)
                             .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
                         items.push(BundleItem::Clone {
@@ -195,7 +193,7 @@ impl Settings {
                         });
                     }
                     "cp" => {
-                        let source_entry = kdl_helpers::arg0(bundle_item)?;
+                        let source_entry = h::arg0(bundle_item)?;
                         let source = dotfiles_dir.join(String::from_kdl_entry(source_entry)?);
                         if !source.exists() {
                             return Err(SettingsDiagnostic::path_not_found(
@@ -203,7 +201,7 @@ impl Settings {
                                 source.display().to_string(),
                             ));
                         }
-                        let target = kdl_helpers::arg(bundle_item, 1)
+                        let target = h::arg(bundle_item, 1)
                             .map_err(Into::into)
                             .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
                         items.push(BundleItem::Copy {
@@ -214,7 +212,7 @@ impl Settings {
                     }
                     "ln" => {
                         // same as cp but creates a symlink instead of copying
-                        let source_entry = kdl_helpers::arg0(bundle_item)?;
+                        let source_entry = h::arg0(bundle_item)?;
                         let source = dotfiles_dir.join(String::from_kdl_entry(source_entry)?);
                         if !source.exists() {
                             return Err(SettingsDiagnostic::path_not_found(
@@ -222,7 +220,7 @@ impl Settings {
                                 source.display().to_string(),
                             ));
                         }
-                        let target = kdl_helpers::arg(bundle_item, 1)
+                        let target = h::arg(bundle_item, 1)
                             .map_err(Into::into)
                             .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
                         items.push(BundleItem::Link {
@@ -232,9 +230,8 @@ impl Settings {
                         });
                     }
                     "source" => {
-                        let snippet =
-                            kdl_helpers::arg(bundle_item, 0).and_then(String::from_kdl_entry)?;
-                        let shell = kdl_helpers::prop(bundle_item, "shell")
+                        let snippet = h::arg(bundle_item, 0).and_then(String::from_kdl_entry)?;
+                        let shell = h::prop(bundle_item, "shell")
                             .map_err(Into::into)
                             .and_then(Shell::from_kdl_entry)?;
 
@@ -270,11 +267,11 @@ impl Settings {
 
 impl env::ExpandValue {
     fn apply_exports_to_env(
-        document: &impl kdl_helpers::KdlDocumentExt,
+        document: &impl h::KdlDocumentExt,
         env_map: &mut IndexMap<String, String>,
     ) -> Result<(), SettingsDiagnostic> {
         for n in document.get_children_named("export") {
-            let (id, entry) = kdl_helpers::prop0(n)?;
+            let (id, entry) = h::prop0(n)?;
             let v = env::ExpandValue::from_kdl_entry(entry, env_map)?;
             env_map.insert(id.value().to_string(), v.value);
         }
