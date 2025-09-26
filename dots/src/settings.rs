@@ -9,7 +9,7 @@ use crate::{
 use indexmap::IndexMap;
 use kdl::{KdlDiagnostic, KdlDocument, KdlEntry, KdlNode, KdlValue};
 use miette::{Severity, SourceSpan};
-use semver;
+use semver::{self, VersionReq};
 use std::path::PathBuf;
 use strum::{self, VariantNames};
 
@@ -151,7 +151,7 @@ impl Settings {
                             kdl_helpers::arg0(bundle_item).and_then(String::from_kdl_entry)?;
                         let manager = bundle_item
                             .entry("pm")
-                            .map(|e| ManagerIdentifier::from_kdl_entry(e).map(|m| (e, m)))
+                            .map(ManagerIdentifier::from_kdl_entry_keep)
                             .transpose()?;
                         if let Some((mgr_entry, ref mgr)) = manager
                             && !package_managers.contains_key(mgr)
@@ -165,17 +165,7 @@ impl Settings {
                         }
                         let version = bundle_item
                             .entry("version")
-                            .map(|entry| {
-                                let ver_str = String::from_kdl_entry(entry)?;
-                                semver::VersionReq::parse(&ver_str).map_err(|err| {
-                                    diag!(
-                                        entry.span(),
-                                        message = format!("invalid version requirement '{}': {}", ver_str, err),
-                                        help = "use a valid semver version requirement, e.g. ^1.2.3, >=1.0.0, etc.",
-                                        severity = Severity::Warning
-                                    )
-                                })
-                            })
+                            .map(VersionReq::from_kdl_entry)
                             .transpose()?;
                         items.push(BundleItem::Install {
                             name,
@@ -247,7 +237,7 @@ impl Settings {
                         let shell = kdl_helpers::prop(bundle_item, "shell")
                             .map_err(Into::into)
                             .and_then(Shell::from_kdl_entry)?;
-                        // .map(Shell::from_kdl_entry)?;
+
                         let position = bundle_item
                             .entry("position")
                             .map_or(Ok(Position::Random), |e| Position::from_kdl_entry(e))?;

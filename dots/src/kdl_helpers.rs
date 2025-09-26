@@ -145,13 +145,33 @@ pub fn args(node: &kdl::KdlNode) -> Result<impl Iterator<Item = &KdlEntry>, KdlD
 }
 
 pub trait FromKdlEntry: Sized {
-    fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic>;
-}
-
-impl FromKdlEntry for String {
     fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic> {
         bail_on_entry_ty!(entry);
-        entry.value().as_string().map(|s| s.to_owned()).ok_or_else(|| {
+        Self::from_kdl_entry_allow_ty(entry)
+    }
+
+    fn from_kdl_entry_keep(entry: &kdl::KdlEntry) -> Result<(&kdl::KdlEntry, Self), KdlDiagnostic> {
+        let v = Self::from_kdl_entry(entry)?;
+        Ok((entry, v))
+    }
+
+    fn from_kdl_entry_allow_ty(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic>;
+
+    fn from_kdl_entry_allow_ty_keep(
+        entry: &kdl::KdlEntry,
+    ) -> Result<(&kdl::KdlEntry, Self), KdlDiagnostic> {
+        let v = Self::from_kdl_entry_allow_ty(entry)?;
+        Ok((entry, v))
+    }
+}
+
+impl<T> FromKdlEntry for T
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    fn from_kdl_entry_allow_ty(entry: &kdl::KdlEntry) -> Result<Self, KdlDiagnostic> {
+        let s = entry.value().as_string().ok_or_else(|| {
             diag!(
                 entry.span(),
                 message = format!(
@@ -159,6 +179,13 @@ impl FromKdlEntry for String {
                     inspect_entry_ty_name(entry),
                     "string"
                 )
+            )
+        })?;
+        s.parse::<T>().map_err(|err| {
+            diag!(
+                entry.span(),
+                message = format!("failed to parse '{}': {}", s, err),
+                help = format!("use a valid '{}'", std::any::type_name::<T>())
             )
         })
     }
