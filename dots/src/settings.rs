@@ -93,6 +93,7 @@ impl Settings {
         let dotfiles_dir = document
             .get_node_required_one("dotfiles_dir")
             .and_then(kdl_helpers::arg0)
+            .map_err(Into::into)
             .and_then(|entry| env::ExpandValue::from_kdl_entry_dir_exists(entry, &env_map))?;
 
         let mut package_managers = IndexMap::new();
@@ -211,14 +212,10 @@ impl Settings {
                         let source_entry = kdl_helpers::arg0(bundle_item)?;
                         let source = dotfiles_dir.join(String::from_kdl_entry(source_entry)?);
                         if !source.exists() {
-                            return Err(diag!(
+                            return Err(SettingsDiagnostic::path_not_found(
                                 source_entry.span(),
-                                message =
-                                    format!("source path does not exist: {}", source.display()),
-                                help = "ensure the source path exists in the dotfiles directory",
-                                severity = Severity::Warning
-                            )
-                            .into());
+                                source.display().to_string(),
+                            ));
                         }
                         let target = kdl_helpers::arg(bundle_item, 1)
                             .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
@@ -233,14 +230,10 @@ impl Settings {
                         let source_entry = kdl_helpers::arg0(bundle_item)?;
                         let source = dotfiles_dir.join(String::from_kdl_entry(source_entry)?);
                         if !source.exists() {
-                            return Err(diag!(
+                            return Err(SettingsDiagnostic::path_not_found(
                                 source_entry.span(),
-                                message =
-                                    format!("source path does not exist: {}", source.display()),
-                                help = "ensure the source path exists in the dotfiles directory",
-                                severity = Severity::Warning
-                            )
-                            .into());
+                                source.display().to_string(),
+                            ));
                         }
                         let target = kdl_helpers::arg(bundle_item, 1)
                             .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
@@ -269,18 +262,13 @@ impl Settings {
                     }
                     "export" => { /* already handled */ }
                     _ => {
-                        return Err(diag!(
+                        return Err(SettingsDiagnostic::unknown_variant(
                             bundle_item.span(),
-                            message =
-                                format!("unknown bundle item: '{}'", bundle_item.name().value()),
-                            help = format!(
-                                "expected {}",
-                                OneOf::new(&[
-                                    "install", "cp", "ln", "alias", "clone", "source", "export"
-                                ])
-                            )
-                        )
-                        .into());
+                            bundle_item.name().value(),
+                            OneOf::new(&[
+                                "install", "cp", "ln", "alias", "clone", "source", "export",
+                            ]),
+                        ));
                     }
                 }
             }
@@ -338,16 +326,14 @@ impl env::ExpandValue {
     pub fn from_kdl_entry_dir_exists(
         entry: &KdlEntry,
         env: &IndexMap<String, String>,
-    ) -> Result<PathBuf, KdlDiagnostic> {
+    ) -> Result<PathBuf, SettingsDiagnostic> {
         let expanded = Self::from_kdl_entry(entry, env)?;
         let path = PathBuf::from(&expanded.value);
         match path.metadata() {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                return Err(diag!(
+                return Err(SettingsDiagnostic::path_not_found(
                     entry.span(),
-                    message = format!("path does not exist: {}", expanded.value),
-                    help = "ensure the path exists, or update the configuration",
-                    severity = Severity::Warning
+                    path.display().to_string(),
                 ));
             }
             Err(err) => {
@@ -357,7 +343,8 @@ impl env::ExpandValue {
                     help =
                         "check the path permissions or system state, or update the configuration",
                     severity = Severity::Warning
-                ));
+                )
+                .into());
             }
             Ok(meta) if !meta.is_dir() => {
                 return Err(diag!(
@@ -365,7 +352,8 @@ impl env::ExpandValue {
                     message = format!("path is not a directory: {}", expanded.value),
                     help = "ensure the path is a directory, or update the configuration",
                     severity = Severity::Warning
-                ));
+                )
+                .into());
             }
             Ok(_) => { /* path exists and is a directory */ }
         }

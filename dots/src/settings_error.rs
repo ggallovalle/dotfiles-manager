@@ -80,6 +80,7 @@ impl Diagnostic for SettingsError {
 #[derive(Debug, Clone)]
 pub enum SettingsDiagnostic {
     UnknownVariant { variant: String, expected: OneOf, span: SourceSpan },
+    PathNotFound { path: String, span: SourceSpan },
     ParseError(kdl::KdlDiagnostic),
 }
 
@@ -96,10 +97,15 @@ impl SettingsDiagnostic {
         }
     }
 
+    pub fn path_not_found(span: impl Into<SourceSpan>, path: impl Into<String>) -> Self {
+        SettingsDiagnostic::PathNotFound { path: path.into(), span: span.into() }
+    }
+
     pub fn span(&self) -> SourceSpan {
         match self {
             SettingsDiagnostic::UnknownVariant { span, .. } => span.clone(),
             SettingsDiagnostic::ParseError(error) => error.span.clone(),
+            SettingsDiagnostic::PathNotFound { span, .. } => span.clone(),
         }
     }
 
@@ -111,6 +117,7 @@ impl SettingsDiagnostic {
         match self {
             SettingsDiagnostic::UnknownVariant { .. } => "unknown variant",
             SettingsDiagnostic::ParseError(_) => "parse error",
+            SettingsDiagnostic::PathNotFound { .. } => "path not found",
         }
     }
 }
@@ -123,10 +130,12 @@ impl fmt::Display for SettingsDiagnostic {
             SettingsDiagnostic::UnknownVariant { variant, expected, .. } => {
                 write!(f, "unknown variant `{}`, expected {}", variant, expected)
             }
+            SettingsDiagnostic::PathNotFound { path, .. } => {
+                write!(f, "path not found: {}", path)
+            }
             SettingsDiagnostic::ParseError(error) => {
                 write!(f, "{}", error)
             }
-            _ => Ok(()),
         }
     }
 }
@@ -149,11 +158,13 @@ impl Diagnostic for SettingsDiagnostic {
 
     fn help<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
         match self {
-            Self::ParseError(error) => return error.help(),
-            Self::UnknownVariant { expected, .. } => {
+            SettingsDiagnostic::ParseError(error) => return error.help(),
+            SettingsDiagnostic::UnknownVariant { expected, .. } => {
                 return Some(Box::new(format!("expected {}", expected)));
             }
-            _ => {}
+            SettingsDiagnostic::PathNotFound { .. } => {
+                return Some(Box::new("ensure the path exists".to_string()));
+            }
         };
         None
     }
