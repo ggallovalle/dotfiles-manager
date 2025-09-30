@@ -22,10 +22,10 @@ package_managers "paru" "pacman"
 // export ZDOTDIR=   (source)   zsh // invalid type
 
 // export FISHCONFIG="$HOME/fish"
-export BASHCONFIG="mnt/c/user/${USER}/bash"
+env export BASHCONFIG="mnt/c/user/${USER}/bash"
 
 bundle "zsh" {
-    export ZDOTDIR="${XDG_CONFIG_HOME}/zsh"
+    env export ZDOTDIR="${XDG_CONFIG_HOME}/zsh"
     // install zsh pm=yay // error, yay not defined in package_managers
     // install zsh pm=choco // error, choco not available on Archlinux
     // install zsh pm=pacman version="exo.8.1" // error, invalid version format

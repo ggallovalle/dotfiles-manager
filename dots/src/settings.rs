@@ -245,13 +245,19 @@ impl Settings {
                             span: bundle_item.span(),
                         });
                     }
-                    "export" => { /* already handled */ }
+                    env::ExpandValue::ENV_NODE => { /* already handled */ }
                     _ => {
                         return Err(SettingsDiagnostic::unknown_variant(
                             bundle_item,
                             bundle_item.name().value(),
                             OneOf::from_iter(&[
-                                "install", "cp", "ln", "alias", "clone", "source", "export",
+                                "install",
+                                "cp",
+                                "ln",
+                                "alias",
+                                "clone",
+                                "source",
+                                env::ExpandValue::ENV_NODE,
                             ]),
                         ));
                     }
@@ -266,12 +272,23 @@ impl Settings {
 }
 
 impl env::ExpandValue {
+    const ENV_NODE: &str = "env";
+
     fn apply_exports_to_env(
         document: &impl h::KdlDocumentExt,
         env_map: &mut IndexMap<String, String>,
     ) -> Result<(), SettingsDiagnostic> {
-        for n in document.get_children_named("export") {
-            let (id, entry) = h::prop0(n)?;
+        for node in document.get_children_named(Self::ENV_NODE) {
+            let (mode_entry, mode) = h::arg0(node).and_then(String::from_kdl_entry_keep)?;
+            if !matches!(mode.as_str(), "export" | "import") {
+                return Err(SettingsDiagnostic::unknown_variant(
+                    mode_entry,
+                    mode,
+                    OneOf::from_iter(&["export", "import"]),
+                ));
+            }
+
+            let (id, entry) = h::prop_at(node, 1)?;
             let v = env::ExpandValue::from_kdl_entry(entry, env_map)?;
             env_map.insert(id.value().to_string(), v.value);
         }

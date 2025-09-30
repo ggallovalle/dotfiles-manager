@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use crate::settings_error::SettingsDiagnostic;
-use kdl::{KdlDiagnostic, KdlEntry};
+use kdl::{KdlDiagnostic, KdlDocument, KdlEntry, KdlIdentifier, KdlNode, KdlValue};
 use miette::SourceSpan;
 
 #[macro_export]
@@ -76,25 +76,6 @@ pub fn inspect_entry_ty_name(entry: &KdlEntry) -> &str {
     }
 }
 
-pub fn prop0(node: &kdl::KdlNode) -> Result<(&kdl::KdlIdentifier, &KdlEntry), KdlDiagnostic> {
-    let mut entries = node.entries().iter();
-    let name = node.name().value();
-    match entries.next() {
-        None => Err(diag!(
-            node.span(),
-            message = format!("node '{}' requires at least one entry", name)
-        )),
-        Some(entry) => match entry.name() {
-            None => Err(diag!(
-                entry.span(),
-                message =
-                    format!("node '{}' first entry must be a property, not an argument", name)
-            )),
-            Some(name_id) => Ok((name_id, entry)),
-        },
-    }
-}
-
 pub fn prop<'a>(node: &'a kdl::KdlNode, key: &str) -> Result<&'a KdlEntry, KdlDiagnostic> {
     let entry = node.entry(key).ok_or_else(|| {
         diag!(
@@ -105,24 +86,32 @@ pub fn prop<'a>(node: &'a kdl::KdlNode, key: &str) -> Result<&'a KdlEntry, KdlDi
     Ok(entry)
 }
 
-pub fn arg0(node: &kdl::KdlNode) -> Result<&KdlEntry, KdlDiagnostic> {
+pub fn prop_at<'a>(
+    node: &'a kdl::KdlNode,
+    index: usize,
+) -> Result<(&'a kdl::KdlIdentifier, &'a KdlEntry), KdlDiagnostic> {
+    // let mut entries = node.entries().iter().filter(|e| e.name().is_some());
     let mut entries = node.entries().iter();
-    match entries.next() {
-        None => Err(diag!(
+    let entry = entries.nth(index).ok_or_else(|| {
+        diag!(
             node.span(),
-            message = format!("node '{}' requires at least one entry", node.name().value())
+            message =
+                format!("node '{}' requires property at index '{}'", node.name().value(), index)
+        )
+    })?;
+    match entry.name() {
+        None => Err(diag!(
+            entry.span(),
+            message = format!("node entry index '{}' must be a property, not an argument", index)
         )),
-        Some(entry) => match entry.name() {
-            Some(name_id) => Err(diag!(
-                name_id.span(),
-                message = format!(
-                    "node '{}' first entry must be an argument, not a property",
-                    node.name().value()
-                )
-            )),
-            None => Ok(entry),
-        },
+        Some(name_id) => Ok((name_id, entry)),
     }
+}
+
+pub fn prop0<'a>(
+    node: &'a kdl::KdlNode,
+) -> Result<(&'a kdl::KdlIdentifier, &'a KdlEntry), KdlDiagnostic> {
+    prop_at(node, 0)
 }
 
 pub fn arg(node: &kdl::KdlNode, index: usize) -> Result<&KdlEntry, KdlDiagnostic> {
@@ -133,6 +122,29 @@ pub fn arg(node: &kdl::KdlNode, index: usize) -> Result<&KdlEntry, KdlDiagnostic
         )
     })?;
     Ok(value)
+}
+
+pub fn arg_at<'a>(node: &'a kdl::KdlNode, index: usize) -> Result<&'a KdlEntry, KdlDiagnostic> {
+    // let mut entries = node.entries().iter().filter(|e| e.name().is_some());
+    let mut entries = node.entries().iter();
+    let entry = entries.nth(index).ok_or_else(|| {
+        diag!(
+            node.span(),
+            message =
+                format!("node '{}' requires argument at index '{}'", node.name().value(), index)
+        )
+    })?;
+    match entry.name() {
+        None => Ok(entry),
+        Some(name_id) => Err(diag!(
+            entry.span(),
+            message = format!("node entry index '{}' must be an argument, not a property", index)
+        )),
+    }
+}
+
+pub fn arg0<'a>(node: &'a KdlNode) -> Result<&'a KdlEntry, KdlDiagnostic> {
+    arg_at(node, 0)
 }
 
 pub fn args(node: &kdl::KdlNode) -> Result<impl Iterator<Item = &KdlEntry>, KdlDiagnostic> {
