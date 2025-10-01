@@ -27,6 +27,8 @@ valuable = { version = "0.1.1", features = ["derive"] }
 kdl = "6.3.4"
 miette = { version = "7.6.0", features = ["fancy"] }
 thiserror = "2.0.16"
+ignore = "0.4.23"
+globset = "0.4.16"
 clap = { version = "4.0", features = ["derive"], optional = true }
 clap_complete = { version = "4", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter", "json"]}

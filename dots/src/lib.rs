@@ -12,6 +12,7 @@ use thiserror::Error;
 use valuable;
 
 mod env;
+mod file_transfer;
 mod kdl_helpers;
 mod package_manager;
 mod settings;
