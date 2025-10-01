@@ -9,7 +9,11 @@ use crate::{
 use indexmap::IndexMap;
 use kdl;
 use miette;
-use std::{fmt::Write, path::PathBuf, sync::Arc};
+use std::{
+    fmt::Write,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use thiserror::Error;
 use valuable;
 
@@ -159,32 +163,47 @@ impl Dots {
             for item in items {
                 if let BundleItem::Copy { source, target, span, recursive } = item {
                     tracing::info!(source = %source.display(), target = %target.display(), recursive = recursive, "bundle_item_copy");
-                    if *recursive {
-                        for copy_log in FileTransfer::builder(source, target)
-                            .dry_run(self.dry_run)
-                            .action(FileTransferAction::Copy)
-                            .build()
-                            .iter()
-                        {
-                        }
-                        {}
-                    } else {
-                        file_transfer::apply_action(
-                            &FileTransferAction::Copy,
-                            source,
-                            target,
-                            self.dry_run,
-                            false,
-                        );
-                    }
+                    self.apply_bundle_transfer_item(
+                        source,
+                        target,
+                        *recursive,
+                        &FileTransferAction::Copy,
+                    );
                 } else if let BundleItem::Link { source, target, span } = item {
                     let is_recursive = source.is_dir();
                     tracing::info!(source = %source.display(), target = %target.display(), "bundle_item_link");
+                    self.apply_bundle_transfer_item(
+                        source,
+                        target,
+                        is_recursive,
+                        &FileTransferAction::Symlink,
+                    );
                 }
             }
         }
 
         Ok(())
+    }
+
+    pub fn apply_bundle_transfer_item(
+        &self,
+        source: &Path,
+        target: &Path,
+        recursive: bool,
+        action: &FileTransferAction,
+    ) {
+        // assert!(action == &FileTransferAction::Copy || action == &FileTransferAction::Link);
+        if recursive {
+            for copy_log in FileTransfer::builder(source, target)
+                .dry_run(self.dry_run)
+                .action(action.clone())
+                .build()
+                .iter()
+            {}
+            {}
+        } else {
+            file_transfer::apply_action(action, source, target, self.dry_run, false);
+        }
     }
 
     pub fn dotfiles_uninstall(&mut self) -> Result<(), DotsError> {

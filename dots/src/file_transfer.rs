@@ -321,6 +321,10 @@ pub fn apply_action(
             // make_symlink(source, target)
             apply_action(action, source, target, dry_run, force)
         }
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists && !force => {
+            tracing::debug!(target = %target.display(), "skipping existing file");
+            Ok(())
+        }
         other => other,
     }
     // result
