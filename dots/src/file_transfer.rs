@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -159,9 +160,72 @@ pub struct FileTransferIterator {
 
 impl FileTransferIterator {
     pub fn get_target_for(&self, entry: &ignore::DirEntry) -> PathBuf {
-        let base = self.bases.iter().find(|base| entry.path().starts_with(base)).unwrap();
-        let rel_path = entry.path().strip_prefix(base).unwrap();
-        self.target.join(rel_path)
+        // let base = self.bases.iter().find(|base| entry.path().starts_with(base)).unwrap();
+        // let rel_path = entry.path().strip_prefix(base).unwrap();
+        // self.target.join(rel_path)
+
+        let depth = entry.depth();
+        if depth == 0 {
+            return self.target.clone();
+        }
+        // tracing::debug!(entry = %entry.path().display(), depth = depth, target = %self.target.display(), "getting target for entry");
+        let target = self.target.join(path_tail(entry.path(), depth).unwrap());
+        target
+    }
+}
+
+/// Get the last `size` components of a path.
+/// - If the path has less than `size` components, return None.
+/// - If size is 1, return the file name.
+/// - If size is 2, return the parent and file name.
+/// - If size is 3, return the grandparent, parent and file name.
+/// - If size is greater than 3, return the last `size` components.
+/// 
+/// Hot path, only supports up to 3 components without allocation.
+fn path_tail(path: &Path, size: usize) -> Option<PathBuf> {
+    let mut components = path.components();
+    match size {
+        0 => None,
+        1 => components.next_back().map(|c| c.as_os_str().into()),
+        2 => {
+            let second = components.next_back();
+            let first = components.next_back();
+            match (first, second) {
+                (Some(f), Some(s)) => {
+                    let mut instance = PathBuf::from(f.as_os_str());
+                    instance.push(s.as_os_str());
+                    Some(instance)
+                }
+                _ => None,
+            }
+        }
+        3 => {
+            let third = components.next_back();
+            let second = components.next_back();
+            let first = components.next_back();
+            match (first, second, third) {
+                (Some(f), Some(s), Some(t)) => {
+                    let mut instance = PathBuf::from(f.as_os_str());
+                    instance.push(s.as_os_str());
+                    instance.push(t.as_os_str());
+                    Some(instance)
+                }
+                _ => None,
+            }
+        }
+        n => {
+            let mut deque = VecDeque::with_capacity(n);
+            let mut counter = 0;
+            while let Some(c) = components.next_back() && counter < n {
+                deque.push_front(c.as_os_str());
+                counter += 1;
+            }
+            if counter < n {
+                return None;
+            }
+            let instace = deque.into_iter().collect::<PathBuf>();
+            Some(instace)
+        }
     }
 }
 
@@ -177,7 +241,7 @@ impl Iterator for FileTransferIterator {
                     let target = self.get_target_for(&entry);
 
                     // ensure they exist in the target
-                    tracing::info!(dry_run = self.dry_run, target = %target.display(), "ensuring directory exists");
+                    tracing::info!(dry_run = self.dry_run, target = %target.display(), depth = &entry.depth(),  "ensuring directory exists");
                     if !self.dry_run {
                         match std::fs::create_dir_all(target) {
                             Ok(_) => {}
@@ -190,6 +254,7 @@ impl Iterator for FileTransferIterator {
                 }
                 Ok(entry) => {
                     let target = self.get_target_for(&entry);
+
                     match apply_action(
                         &self.action,
                         entry.path(),
@@ -275,7 +340,7 @@ mod tests {
             // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config", "/home/kbroom/.config")
             // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/**/*.lua", "/home/kbroom/.config")
             FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/awesome/*.lua", "/home/kbroom/.config/test")
-            .add_source("/home/kbroom/dotfiles/git/*.yaml")
+            // .add_source("/home/kbroom/dotfiles/git/*.yaml")
                 // .dry_run(true)
                 .force(true)
                 .action(FileTransferAction::Copy)
