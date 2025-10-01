@@ -156,38 +156,45 @@ pub struct FileTransferIterator {
     base: PathBuf,
 }
 
+impl FileTransferIterator {
+    pub fn get_target_for(&self, entry: &ignore::DirEntry) -> PathBuf {
+        let rel_path = entry.path().strip_prefix(&self.base).unwrap();
+        self.target.join(rel_path)
+    }
+}
+
 impl Iterator for FileTransferIterator {
     type Item = Result<ignore::DirEntry, ignore::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(res) = self.inner.next() {
             match res {
-                Ok(entry) => {
-                    let rel_path = entry.path().strip_prefix(&self.base).unwrap();
-                    let target = &self.target.join(rel_path);
-                    // for some reasons this is stdin, wtf ignore it
-                    if entry.file_type().is_none() {
-                        continue;
-                    }
-                    let file_type = entry.file_type().unwrap();
+                // for some reasons this is stdin, wtf ignore it
+                Ok(entry) if entry.file_type().is_none() => continue,
+                Ok(entry) if entry.file_type().unwrap().is_dir() => {
+                    let target = self.get_target_for(&entry);
 
-                    if file_type.is_dir() {
-                        // ensure they exist in the target
-                        tracing::info!(dry_run = self.dry_run, target = %target.display(), "ensuring directory exists");
-                        if !self.dry_run {
-                            match std::fs::create_dir_all(target) {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    return Some(Err(e.into()));
-                                }
+                    // ensure they exist in the target
+                    tracing::info!(dry_run = self.dry_run, target = %target.display(), "ensuring directory exists");
+                    if !self.dry_run {
+                        match std::fs::create_dir_all(target) {
+                            Ok(_) => {}
+                            Err(e) => {
+                                return Some(Err(e.into()));
                             }
                         }
-                        return Some(Ok(entry));
                     }
-
-                    // dbg!(entry.path(), file_type);
-                    match apply_action(&self.action, entry.path(), target, self.dry_run, self.force)
-                    {
+                    return Some(Ok(entry));
+                }
+                Ok(entry) => {
+                    let target = self.get_target_for(&entry);
+                    match apply_action(
+                        &self.action,
+                        entry.path(),
+                        &target,
+                        self.dry_run,
+                        self.force,
+                    ) {
                         Ok(_) => return Some(Ok(entry)),
                         Err(e) => return Some(Err(e.into())),
                     }
@@ -211,6 +218,7 @@ fn apply_action(
             tracing::info!(dry_run = dry_run, source = %source.display(), target = %target.display(), "copying");
             if !dry_run {
                 if force && target.exists() {
+                    tracing::info!(target = %target.display(), "removing existing file due to force");
                     fs::remove_file(target)?;
                 }
                 fs::copy(source, target).map(|_| ())
@@ -270,18 +278,17 @@ mod tests {
                 // .action(FileTransferAction::Symlink)
                 // .action(FileTransferAction::HardLink)
                 .build();
-        // TODO: add force test, right now it errors if the file exists
         // TODO: base should be dynamic to support multiple sources
 
         for entry in transfer.iter() {
-            match entry {
-                Ok(entry) => {
-                    tracing::info!("Processed: {}", entry.path().display());
-                }
-                Err(e) => {
-                    tracing::error!("Error: {:?}", e);
-                }
-            }
+            // match entry {
+            //     Ok(entry) => {
+            //         tracing::info!("Processed: {}", entry.path().display());
+            //     }
+            //     Err(e) => {
+            //         tracing::error!("Error: {:?}", e);
+            //     }
+            // }
         }
 
         assert!(false);
