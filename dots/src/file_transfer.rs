@@ -107,7 +107,7 @@ impl FileTransfer {
         FileTransferBuilder::new(source, target)
     }
 
-    pub fn iter(&self) -> FileTransferIterator {
+    pub fn transfer(&self) -> FileTransferIterator {
         let walk = self.walk_builder.build();
         FileTransferIterator {
             inner: walk,
@@ -116,6 +116,24 @@ impl FileTransfer {
             force: self.force,
             action: self.action,
         }
+    }
+
+    pub fn walk(&self) -> impl Iterator<Item = Result<FileTransferEntry, ignore::Error>> {
+        let result = self.walk_builder.build().filter_map({
+            let target = self.target.clone();
+            move |res| {
+                if let Err(e) = res {
+                    return Some(Err(e));
+                }
+                let entry = res.unwrap();
+                if entry.file_type().is_none() {
+                    return None;
+                }
+                let target = FileTransferIterator::get_target_for(&target, &entry);
+                Some(Ok(FileTransferEntry { target: target, ignore_entry: entry }))
+            }
+        });
+        result
     }
 }
 
@@ -128,17 +146,17 @@ pub struct FileTransferIterator {
 }
 
 impl FileTransferIterator {
-    pub fn get_target_for(&self, entry: &ignore::DirEntry) -> PathBuf {
+    pub fn get_target_for(target: &PathBuf, entry: &ignore::DirEntry) -> PathBuf {
         // let base = self.bases.iter().find(|base| entry.path().starts_with(base)).unwrap();
         // let rel_path = entry.path().strip_prefix(base).unwrap();
         // self.target.join(rel_path)
 
         let depth = entry.depth();
         if depth == 0 {
-            return self.target.clone();
+            return target.clone();
         }
         // tracing::debug!(entry = %entry.path().display(), depth = depth, target = %self.target.display(), "getting target for entry");
-        let target = self.target.join(path_tail(entry.path(), depth).unwrap());
+        let target = target.join(path_tail(entry.path(), depth).unwrap());
         target
     }
 }
@@ -238,7 +256,7 @@ impl Iterator for FileTransferIterator {
                 // for some reasons this is stdin, wtf ignore it
                 Ok(entry) if entry.file_type().is_none() => continue,
                 Ok(entry) if entry.file_type().unwrap().is_dir() => {
-                    let target = self.get_target_for(&entry);
+                    let target = FileTransferIterator::get_target_for(&self.target, &entry);
 
                     // ensure they exist in the target
                     tracing::info!(dry_run = self.dry_run, target = %target.display(), depth = &entry.depth(),  "ensuring directory exists");
@@ -253,7 +271,7 @@ impl Iterator for FileTransferIterator {
                     return Some(Ok(FileTransferEntry { target: target, ignore_entry: entry }));
                 }
                 Ok(entry) => {
-                    let target = self.get_target_for(&entry);
+                    let target = FileTransferIterator::get_target_for(&self.target, &entry);
 
                     match apply_action(
                         &self.action,
@@ -370,7 +388,7 @@ mod tests {
         .build();
         // TODO: base should be dynamic to support multiple sources
 
-        for result in transfer.iter() {
+        for result in transfer.transfer() {
             match result {
                 Ok(entry) if entry.is_file() => {
                     tracing::info!("Processed: {}", entry.target().display());

@@ -198,7 +198,7 @@ impl Dots {
                 .dry_run(self.dry_run)
                 .action(action.clone())
                 .build()
-                .iter()
+                .transfer()
             {}
             {}
         } else {
