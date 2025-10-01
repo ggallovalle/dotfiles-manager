@@ -44,6 +44,7 @@ impl FileTransferBuilder {
         {
             walk_builder.filter_entry({
                 let base = base;
+                let glob_set = glob_set;
                 move |entry| {
                 match entry.file_type() {
                     Some(ft) if ft.is_dir() => return true, // always include directories
@@ -164,9 +165,14 @@ impl Iterator for FileTransferIterator {
                 Ok(entry) => {
                     let rel_path = entry.path().strip_prefix(&self.base).unwrap();
                     let target = &self.target.join(rel_path);
+                    // for some reasons this is stdin, wtf ignore it
+                    if entry.file_type().is_none() {
+                        continue;
+                    }
+                    let file_type = entry.file_type().unwrap();
 
-                    if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(true) {
-                        // Skip directories but ensure they exist in the target
+                    if file_type.is_dir() {
+                        // ensure they exist in the target
                         tracing::info!(dry_run = self.dry_run, target = %target.display(), "ensuring directory exists");
                         if !self.dry_run {
                             match std::fs::create_dir_all(target) {
@@ -176,10 +182,12 @@ impl Iterator for FileTransferIterator {
                                 }
                             }
                         }
-                        continue;
+                        return Some(Ok(entry));
                     }
 
-                    match apply_action(&self.action, entry.path(), target, self.dry_run) {
+                    // dbg!(entry.path(), file_type);
+                    match apply_action(&self.action, entry.path(), target, self.dry_run, self.force)
+                    {
                         Ok(_) => return Some(Ok(entry)),
                         Err(e) => return Some(Err(e.into())),
                     }
@@ -196,11 +204,19 @@ fn apply_action(
     source: &Path,
     target: &Path,
     dry_run: bool,
+    force: bool,
 ) -> io::Result<()> {
     let result = match action {
         FileTransferAction::Copy => {
             tracing::info!(dry_run = dry_run, source = %source.display(), target = %target.display(), "copying");
-            if !dry_run { fs::copy(source, target).map(|_| ()) } else { Ok(()) }
+            if !dry_run {
+                if force && target.exists() {
+                    fs::remove_file(target)?;
+                }
+                fs::copy(source, target).map(|_| ())
+            } else {
+                Ok(())
+            }
         }
         FileTransferAction::HardLink => {
             tracing::info!(dry_run = dry_run, source = %source.display(), target = %target.display(), "hard linking");
@@ -211,7 +227,16 @@ fn apply_action(
             if !dry_run { make_symlink(source, target) } else { Ok(()) }
         }
     };
-    result
+    match result {
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists && force => {
+            tracing::info!(target = %target.display(), "removing existing file due to force");
+            fs::remove_file(target)?;
+            // make_symlink(source, target)
+            apply_action(action, source, target, dry_run, force)
+        }
+        other => other,
+    }
+    // result
 }
 
 #[cfg(unix)]
@@ -240,6 +265,7 @@ mod tests {
             // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/**/*.lua", "/home/kbroom/.config")
             FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/*.lua", "/home/kbroom/.config")
                 // .dry_run(true)
+                .force(true)
                 .action(FileTransferAction::Copy)
                 // .action(FileTransferAction::Symlink)
                 // .action(FileTransferAction::HardLink)
