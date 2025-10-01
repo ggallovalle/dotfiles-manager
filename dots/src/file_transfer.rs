@@ -8,9 +8,10 @@ use ignore::overrides::OverrideBuilder;
 use ignore::{self, Walk, WalkBuilder};
 
 pub struct FileTransferBuilder {
-    sources: Vec<(PathBuf, Option<String>)>,
-    dry_run: bool,
+    source: PathBuf,
     target: PathBuf,
+    overrides: Option<OverrideBuilder>,
+    dry_run: bool,
     force: bool,
     action: FileTransferAction,
 }
@@ -21,28 +22,22 @@ impl FileTransferBuilder {
             dry_run: false,
             force: false,
             action: FileTransferAction::Copy,
-            sources: vec![Self::split_source_and_pattern(source.as_ref())],
+            overrides: None,
+            source: PathBuf::from(source.as_ref()),
             target: PathBuf::from(target.as_ref()),
         }
     }
 
     pub fn build(&self) -> FileTransfer {
-        let first_source = &self.sources[0];
-        let bases: Vec<PathBuf> = self.sources.iter().map(|(base, _)| base.clone()).collect();
         let target = self.target.clone();
 
-        let mut walk_builder = WalkBuilder::new(bases[0].clone());
+        let mut walk_builder = WalkBuilder::new(&self.source);
         walk_builder.hidden(false);
         walk_builder.follow_links(false);
-        if let Some(glob) = &first_source.1 {
-            match OverrideBuilder::new(&bases[0]).add(glob).and_then(|o| o.build()) {
-                Err(error) => {
-                    tracing::error!(%error, "failed to add glob override");
-                }
-                Ok(overrides) => {
-                    walk_builder.overrides(overrides);
-                }
-            }
+        if let Some(glob) = &self.overrides {
+            walk_builder.overrides(
+                glob.build().expect("this cannot fail, it should fail earlier at 'add_override'"),
+            );
         }
 
         FileTransfer {
@@ -51,7 +46,6 @@ impl FileTransferBuilder {
             dry_run: self.dry_run,
             force: self.force,
             action: self.action,
-            bases: bases.clone(),
         }
     }
 
@@ -70,9 +64,14 @@ impl FileTransferBuilder {
         self
     }
 
-    pub fn add_source(mut self, source: &str) -> Self {
-        self.sources.push(Self::split_source_and_pattern(source));
-        self
+    pub fn add_override<S: AsRef<str>>(mut self, glob: S) -> Result<Self, ignore::Error> {
+        if self.overrides.is_none() {
+            self.overrides = Some(OverrideBuilder::new(&self.source));
+        }
+        match self.overrides.as_mut().unwrap().add(glob.as_ref()) {
+            Err(e) => Err(e),
+            Ok(_) => Ok(self),
+        }
     }
 
     fn split_source_and_pattern(source: &str) -> (PathBuf, Option<String>) {
@@ -85,17 +84,6 @@ impl FileTransferBuilder {
             }
         }
     }
-
-    fn add_glob(builder: &mut Option<GlobSetBuilder>, pattern: Option<String>) {
-        if let Some(pattern) = pattern {
-            if let Ok(glob) = Glob::new(&pattern) {
-                if builder.is_none() {
-                    *builder = Some(GlobSetBuilder::new());
-                }
-                builder.as_mut().unwrap().add(glob);
-            }
-        }
-    }
 }
 
 pub struct FileTransfer {
@@ -104,7 +92,6 @@ pub struct FileTransfer {
     target: PathBuf,
     force: bool,
     action: FileTransferAction,
-    bases: Vec<PathBuf>,
 }
 
 /// The action that will be applied at the end of the pipeline.
@@ -128,7 +115,6 @@ impl FileTransfer {
             dry_run: self.dry_run,
             force: self.force,
             action: self.action,
-            bases: self.bases.clone(),
         }
     }
 }
@@ -139,7 +125,6 @@ pub struct FileTransferIterator {
     dry_run: bool,
     force: bool,
     action: FileTransferAction,
-    bases: Vec<PathBuf>,
 }
 
 impl FileTransferIterator {
@@ -322,18 +307,22 @@ mod tests {
     #[test]
     fn test_dry_run_copy() {
         tracing_subscriber::fmt::init();
-        let transfer =
-            // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config", "/home/kbroom/.config")
-            FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/**/*.lua", "/home/kbroom/.config")
-            // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/awesome/*.lua", "/home/kbroom/.config/test")
-            // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/awesome/[abc", "/home/kbroom/.config/test") // invalid glob
-            // .add_source("/home/kbroom/dotfiles/git/*.yaml")
-                .dry_run(true)
-                .force(true)
-                .action(FileTransferAction::Copy)
-                // .action(FileTransferAction::Symlink)
-                // .action(FileTransferAction::HardLink)
-                .build();
+        let transfer = FileTransfer::builder(
+            "/home/kbroom/dotfiles/awesome/config",
+            "/home/kbroom/.config/test",
+        )
+        .add_override("*.lua")
+        .unwrap()
+        // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/**/*.lua", "/home/kbroom/.config")
+        // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/awesome/*.lua", "/home/kbroom/.config/test")
+        // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/awesome/[abc", "/home/kbroom/.config/test") // invalid glob
+        // .add_source("/home/kbroom/dotfiles/git/*.yaml")
+        // .dry_run(true)
+        .force(true)
+        .action(FileTransferAction::Copy)
+        // .action(FileTransferAction::Symlink)
+        // .action(FileTransferAction::HardLink)
+        .build();
         // TODO: base should be dynamic to support multiple sources
 
         for entry in transfer.iter() {
