@@ -31,8 +31,15 @@ bundle "zsh" {
     // install zsh pm=pacman version="exo.8.1" // error, invalid version format
     install zsh pm=pacman version=">=3.8.1"
     // install zsh
-    cp "zsh/home/dot_zshrc" "${ZDOTDIR}/.zshr"
-    ln "zsh/home/dot_zshenv" "${ZDOTDIR}/.zshenv"
+    // TODO:
+    // 1. implement force prop
+    // 2. on ln implement symbolic and hard props
+    // 3. implement src... target pattern
+    // 4. implement globs patterns
+    // 5. implement template prop
+    cp -r "zsh/home/dot_zshrc" "${ZDOTDIR}/.zshr" template=#true
+    cp "zsh/home/plugins/*.zsh" "${ZDOTDIR}/plugins" template=#true
+    ln "zsh/home/dot_zshenv" "${ZDOTDIR}/.zshenv" force=#true hard=#true symbolic=#true
     // whoami // error, unknown node
 }
 
@@ -49,7 +56,7 @@ bundle "shell-pretty" {
     """# shell=other
 
     install lsd
-    cp "lsd/config/lsd" "${XDG_CONFIG_HOME}/lsd"
+    cp "lsd/config/lsd" "${XDG_CONFIG_HOME}/lsd" force=#true
     alias ls="lsd --group-directories-first"
     alias ll="lsd -l --group-directories-first --header"
     alias la="lsd -l --group-directories-first"

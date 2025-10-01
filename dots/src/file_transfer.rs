@@ -267,6 +267,7 @@ fn make_symlink(src: &Path, dst: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
 
+    // TODO: use https://crates.io/crates/sealed_test
     #[test]
     fn test_dry_run_copy() {
         tracing_subscriber::fmt::init();
