@@ -37,9 +37,9 @@ bundle "zsh" {
     // 3. implement src... target pattern
     // 4. implement globs patterns
     // 5. implement template prop
-    cp -r "zsh/home/dot_zshrc" "${ZDOTDIR}/.zshr" template=#true
-    cp glob="*.zsh" "zsh/home/plugins" "${ZDOTDIR}/plugins" template=#true
-    ln "zsh/home/dot_zshenv" "${ZDOTDIR}/.zshenv" force=#true hard=#true symbolic=#true
+    // cp -r "zsh/home/dot_zshrc" "${ZDOTDIR}/.zshr" template=#true
+    // cp glob="*.zsh" "zsh/home/plugins" "${ZDOTDIR}/plugins" template=#true
+    cp "zsh/home/dot_zshenv" "${ZDOTDIR}/.zshenv" force=#true hard=#true symbolic=#true
     // whoami // error, unknown node
 }
 

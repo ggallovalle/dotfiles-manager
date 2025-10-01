@@ -17,7 +17,7 @@ pub struct FileTransferBuilder {
 }
 
 impl FileTransferBuilder {
-    pub fn new<S: AsRef<str>>(source: S, target: S) -> Self {
+    pub fn new<S: AsRef<Path>>(source: S, target: S) -> Self {
         FileTransferBuilder {
             dry_run: false,
             force: false,
@@ -86,14 +86,6 @@ impl FileTransferBuilder {
     }
 }
 
-pub struct FileTransfer {
-    walk_builder: WalkBuilder,
-    dry_run: bool,
-    target: PathBuf,
-    force: bool,
-    action: FileTransferAction,
-}
-
 /// The action that will be applied at the end of the pipeline.
 #[derive(Debug, Clone, Copy)]
 pub enum FileTransferAction {
@@ -102,8 +94,16 @@ pub enum FileTransferAction {
     Symlink,
 }
 
+pub struct FileTransfer {
+    walk_builder: WalkBuilder,
+    dry_run: bool,
+    target: PathBuf,
+    force: bool,
+    action: FileTransferAction,
+}
+
 impl FileTransfer {
-    pub fn builder<S: AsRef<str>>(source: S, target: S) -> FileTransferBuilder {
+    pub fn builder<S: AsRef<Path>>(source: S, target: S) -> FileTransferBuilder {
         FileTransferBuilder::new(source, target)
     }
 
@@ -278,7 +278,7 @@ impl Iterator for FileTransferIterator {
     }
 }
 
-fn apply_action(
+pub fn apply_action(
     action: &FileTransferAction,
     source: &Path,
     target: &Path,
@@ -291,11 +291,11 @@ fn apply_action(
             if !dry_run {
                 match (force, target.exists()) {
                     (false, true) => {
-                        tracing::info!(target = %target.display(), "skipping existing file");
+                        tracing::debug!(target = %target.display(), "skipping existing file");
                         Ok(())
                     }
                     (true, true) => {
-                        tracing::info!(target = %target.display(), "removing existing file due to force");
+                        tracing::debug!(target = %target.display(), "removing existing file due to force");
                         fs::remove_file(target)?;
                         fs::copy(source, target).map(|_| ())
                     }
@@ -316,7 +316,7 @@ fn apply_action(
     };
     match result {
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists && force => {
-            tracing::info!(target = %target.display(), "removing existing file due to force");
+            tracing::debug!(target = %target.display(), "removing existing file due to force");
             fs::remove_file(target)?;
             // make_symlink(source, target)
             apply_action(action, source, target, dry_run, force)

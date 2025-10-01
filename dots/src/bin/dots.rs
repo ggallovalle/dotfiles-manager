@@ -3,7 +3,7 @@ use clap_complete;
 use dots::Dots;
 use miette;
 use scopeguard;
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 use tracing;
 
 #[derive(Parser, Debug)]
@@ -127,32 +127,30 @@ fn main() -> miette::Result<()> {
             clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
         }
         _ => {
+            if verbosity.is_none() {
+                let mut latest_log = get_logs_dir();
+                latest_log.push("dots-latest.log");
+                eprintln!("see the latest log file at '{}' for details", latest_log.display());
+            }
             let mut dots = Dots::create(args.config, args.dry_run, args.bundles)
-                .inspect_err(|e| trace_dots_error(&verbosity, e))?;
+                .inspect_err(trace_dots_error)?;
             let span = tracing::span!(
                 tracing::Level::DEBUG,
                 "config",
                 config.dotfiles_dir = dots.config.dotfiles_dir.to_str(),
-                config.env = tracing::field::valuable(
-                    &dots.config.env.as_slice().iter().collect::<HashMap<_, _>>()
-                ),
+                config.env = tracing::field::valuable(&dots.config.env.keys().collect::<Vec<_>>()),
                 config.bundles =
                     tracing::field::valuable(&dots.config.bundles.keys().collect::<Vec<_>>()),
             );
             let _span_guard = span.enter();
-            execute(args.command, &mut dots).inspect_err(|e| trace_dots_error(&verbosity, e))?;
+            execute(args.command, &mut dots).inspect_err(trace_dots_error)?;
         }
     }
 
     Ok(())
 }
 
-fn trace_dots_error(verbosity: &Option<tracing::Level>, e: &dots::DotsError) {
-    if verbosity.is_none() {
-        let mut latest_log = get_logs_dir();
-        latest_log.push("dots-latest.log");
-        eprintln!("see the latest log file at '{}' for details", latest_log.display());
-    }
+fn trace_dots_error(e: &dots::DotsError) {
     match e {
         dots::DotsError::Settings(inner) => {
             tracing::error!(

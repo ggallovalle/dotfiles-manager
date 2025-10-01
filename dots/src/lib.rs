@@ -1,10 +1,12 @@
 #![allow(unused)]
 
 use crate::{
+    file_transfer::{FileTransfer, FileTransferAction},
     package_manager::ManagerIdentifier,
-    settings::Settings,
+    settings::{BundleItem, Settings},
     settings_error::{OneOf, SettingsDiagnostic, SettingsError},
 };
+use indexmap::IndexMap;
 use kdl;
 use miette;
 use std::{fmt::Write, path::PathBuf, sync::Arc};
@@ -79,6 +81,23 @@ impl Dots {
         })
     }
 
+    fn public_bundles(&self) -> IndexMap<&str, &Vec<BundleItem>> {
+        let mut all: IndexMap<&str, &Vec<BundleItem>> = IndexMap::new();
+        if let Some(bundles) = &self.bundles {
+            for bundle in bundles {
+                let bundle = bundle.as_str();
+                let items = self.config.bundles.get(bundle).expect("already checked on create");
+
+                all.insert(bundle, items);
+            }
+        } else {
+            for (bundle_name, bundle_items) in &self.config.bundles {
+                all.insert(bundle_name, bundle_items);
+            }
+        }
+        all
+    }
+
     fn log(&mut self, msg: String) -> Result<(), DotsError> {
         if self.dry_run {
             println!("{}", msg);
@@ -129,6 +148,41 @@ impl Dots {
 
     pub fn dotfiles_install(&mut self) -> Result<(), DotsError> {
         self.log("Installing dotfiles...".to_string())?;
+        for (name, items) in self.public_bundles() {
+            let span = tracing::span!(
+                tracing::Level::DEBUG,
+                "bundle",
+                bundle.id = name,
+                bundle.op = "dotfiles_install"
+            );
+            let _span_guard = span.enter();
+            for item in items {
+                if let BundleItem::Copy { source, target, span, recursive } = item {
+                    tracing::info!(source = %source.display(), target = %target.display(), recursive = recursive, "bundle_item_copy");
+                    if *recursive {
+                        for copy_log in FileTransfer::builder(source, target)
+                            .dry_run(self.dry_run)
+                            .action(FileTransferAction::Copy)
+                            .build()
+                            .iter()
+                        {
+                        }
+                        {}
+                    } else {
+                        file_transfer::apply_action(
+                            &FileTransferAction::Copy,
+                            source,
+                            target,
+                            self.dry_run,
+                            false,
+                        );
+                    }
+                } else if let BundleItem::Link { source, target, span } = item {
+                    let is_recursive = source.is_dir();
+                    tracing::info!(source = %source.display(), target = %target.display(), "bundle_item_link");
+                }
+            }
+        }
 
         Ok(())
     }
