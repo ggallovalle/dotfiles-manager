@@ -289,11 +289,18 @@ fn apply_action(
         FileTransferAction::Copy => {
             tracing::info!(dry_run = dry_run, source = %source.display(), target = %target.display(), "copying");
             if !dry_run {
-                if force && target.exists() {
-                    tracing::info!(target = %target.display(), "removing existing file due to force");
-                    fs::remove_file(target)?;
+                match (force, target.exists()) {
+                    (false, true) => {
+                        tracing::info!(target = %target.display(), "skipping existing file");
+                        Ok(())
+                    }
+                    (true, true) => {
+                        tracing::info!(target = %target.display(), "removing existing file due to force");
+                        fs::remove_file(target)?;
+                        fs::copy(source, target).map(|_| ())
+                    }
+                    (_, false) => fs::copy(source, target).map(|_| ()),
                 }
-                fs::copy(source, target).map(|_| ())
             } else {
                 Ok(())
             }
@@ -352,17 +359,20 @@ mod tests {
         // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/awesome/[abc", "/home/kbroom/.config/test") // invalid glob
         // .add_source("/home/kbroom/dotfiles/git/*.yaml")
         // .dry_run(true)
-        .force(true)
+        // .force(true)
         .action(FileTransferAction::Copy)
         // .action(FileTransferAction::Symlink)
         // .action(FileTransferAction::HardLink)
         .build();
         // TODO: base should be dynamic to support multiple sources
 
-        for entry in transfer.iter() {
-            match entry {
-                Ok(entry) => {
+        for result in transfer.iter() {
+            match result {
+                Ok(entry) if entry.is_file() => {
                     tracing::info!("Processed: {}", entry.target().display());
+                }
+                Ok(_) => {
+                    // dirs ignored
                 }
                 Err(e) => {
                     tracing::error!("Error: {:?}", e);
