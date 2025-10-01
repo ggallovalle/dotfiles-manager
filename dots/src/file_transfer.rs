@@ -26,10 +26,10 @@ impl FileTransferBuilder {
 
     pub fn build(&self) -> FileTransfer {
         let first_source = &self.sources[0];
-        let base = first_source.0.clone();
+        let bases: Vec<PathBuf> = self.sources.iter().map(|(base, _)| base.clone()).collect();
         let target = self.target.clone();
 
-        let mut walk_builder = WalkBuilder::new(base.clone());
+        let mut walk_builder = WalkBuilder::new(bases[0].clone());
         walk_builder.hidden(false);
         walk_builder.follow_links(false);
         let mut glob_builder = None;
@@ -43,7 +43,7 @@ impl FileTransferBuilder {
             && let Ok(glob_set) = glob_builder.build()
         {
             walk_builder.filter_entry({
-                let base = base;
+                let bases = bases.clone();
                 let glob_set = glob_set;
                 move |entry| {
                 match entry.file_type() {
@@ -51,7 +51,8 @@ impl FileTransferBuilder {
                     None => return false,                   // include if we can't determine the type
                     _ => {}
                 }
-
+                
+                let base = bases.iter().find(|base| entry.path().starts_with(base)).unwrap();
                 let rel_path = entry.path().strip_prefix(&base).unwrap();
                 let is_match = glob_set.is_match(rel_path);
                 tracing::info!(is_match = is_match, rel_path = %rel_path.display(), entry = ?entry, "matching_glob");
@@ -65,7 +66,7 @@ impl FileTransferBuilder {
             dry_run: self.dry_run,
             force: self.force,
             action: self.action,
-            base: first_source.0.clone(),
+            bases: bases.clone(),
         }
     }
 
@@ -118,7 +119,7 @@ pub struct FileTransfer {
     target: PathBuf,
     force: bool,
     action: FileTransferAction,
-    base: PathBuf,
+    bases: Vec<PathBuf>,
 }
 
 /// The action that will be applied at the end of the pipeline.
@@ -142,7 +143,7 @@ impl FileTransfer {
             dry_run: self.dry_run,
             force: self.force,
             action: self.action,
-            base: self.base.clone(),
+            bases: self.bases.clone(),
         }
     }
 }
@@ -153,12 +154,13 @@ pub struct FileTransferIterator {
     dry_run: bool,
     force: bool,
     action: FileTransferAction,
-    base: PathBuf,
+    bases: Vec<PathBuf>,
 }
 
 impl FileTransferIterator {
     pub fn get_target_for(&self, entry: &ignore::DirEntry) -> PathBuf {
-        let rel_path = entry.path().strip_prefix(&self.base).unwrap();
+        let base = self.bases.iter().find(|base| entry.path().starts_with(base)).unwrap();
+        let rel_path = entry.path().strip_prefix(base).unwrap();
         self.target.join(rel_path)
     }
 }
@@ -271,7 +273,8 @@ mod tests {
         let transfer =
             // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config", "/home/kbroom/.config")
             // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/**/*.lua", "/home/kbroom/.config")
-            FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/*.lua", "/home/kbroom/.config")
+            FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/awesome/*.lua", "/home/kbroom/.config/test")
+            .add_source("/home/kbroom/dotfiles/git/*.yaml")
                 // .dry_run(true)
                 .force(true)
                 .action(FileTransferAction::Copy)
@@ -281,14 +284,14 @@ mod tests {
         // TODO: base should be dynamic to support multiple sources
 
         for entry in transfer.iter() {
-            // match entry {
-            //     Ok(entry) => {
-            //         tracing::info!("Processed: {}", entry.path().display());
-            //     }
-            //     Err(e) => {
-            //         tracing::error!("Error: {:?}", e);
-            //     }
-            // }
+            match entry {
+                Ok(entry) => {
+                    tracing::info!("Processed: {}", entry.path().display());
+                }
+                Err(e) => {
+                    tracing::error!("Error: {:?}", e);
+                }
+            }
         }
 
         assert!(false);
