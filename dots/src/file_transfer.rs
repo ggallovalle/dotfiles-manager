@@ -200,8 +200,37 @@ fn path_tail(path: &Path, size: usize) -> Option<PathBuf> {
     }
 }
 
+pub struct FileTransferEntry {
+    target: PathBuf,
+    ignore_entry: ignore::DirEntry,
+}
+
+impl FileTransferEntry {
+    pub fn source(&self) -> &Path {
+        &self.ignore_entry.path()
+    }
+
+    pub fn target(&self) -> &Path {
+        &self.target
+    }
+
+    pub fn is_file(&self) -> bool {
+        self.ignore_entry
+            .file_type()
+            .expect("file is always Some because stdin is ignored")
+            .is_file()
+    }
+
+    pub fn is_dir(&self) -> bool {
+        self.ignore_entry
+            .file_type()
+            .expect("file is always Some because stdin is ignored")
+            .is_dir()
+    }
+}
+
 impl Iterator for FileTransferIterator {
-    type Item = Result<ignore::DirEntry, ignore::Error>;
+    type Item = Result<FileTransferEntry, ignore::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(res) = self.inner.next() {
@@ -214,14 +243,14 @@ impl Iterator for FileTransferIterator {
                     // ensure they exist in the target
                     tracing::info!(dry_run = self.dry_run, target = %target.display(), depth = &entry.depth(),  "ensuring directory exists");
                     if !self.dry_run {
-                        match std::fs::create_dir_all(target) {
+                        match std::fs::create_dir_all(&target) {
                             Ok(_) => {}
                             Err(e) => {
                                 return Some(Err(e.into()));
                             }
                         }
                     }
-                    return Some(Ok(entry));
+                    return Some(Ok(FileTransferEntry { target: target, ignore_entry: entry }));
                 }
                 Ok(entry) => {
                     let target = self.get_target_for(&entry);
@@ -233,7 +262,12 @@ impl Iterator for FileTransferIterator {
                         self.dry_run,
                         self.force,
                     ) {
-                        Ok(_) => return Some(Ok(entry)),
+                        Ok(_) => {
+                            return Some(Ok(FileTransferEntry {
+                                target: target,
+                                ignore_entry: entry,
+                            }));
+                        }
                         Err(e) => return Some(Err(e.into())),
                     }
                 }
@@ -328,7 +362,7 @@ mod tests {
         for entry in transfer.iter() {
             match entry {
                 Ok(entry) => {
-                    tracing::info!("Processed: {}", entry.path().display());
+                    tracing::info!("Processed: {}", entry.target().display());
                 }
                 Err(e) => {
                     tracing::error!("Error: {:?}", e);
