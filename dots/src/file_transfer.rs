@@ -4,6 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use globset::{Glob, GlobBuilder, GlobSetBuilder};
+use ignore::overrides::OverrideBuilder;
 use ignore::{self, Walk, WalkBuilder};
 
 pub struct FileTransferBuilder {
@@ -33,32 +34,15 @@ impl FileTransferBuilder {
         let mut walk_builder = WalkBuilder::new(bases[0].clone());
         walk_builder.hidden(false);
         walk_builder.follow_links(false);
-        let mut glob_builder = None;
-        Self::add_glob(&mut glob_builder, first_source.1.clone());
-        for others_sources in &self.sources[1..] {
-            walk_builder.add(others_sources.0.clone());
-            Self::add_glob(&mut glob_builder, others_sources.1.clone());
-        }
-
-        if let Some(glob_builder) = glob_builder
-            && let Ok(glob_set) = glob_builder.build()
-        {
-            walk_builder.filter_entry({
-                let bases = bases.clone();
-                let glob_set = glob_set;
-                move |entry| {
-                match entry.file_type() {
-                    Some(ft) if ft.is_dir() => return true, // always include directories
-                    None => return false,                   // include if we can't determine the type
-                    _ => {}
+        if let Some(glob) = &first_source.1 {
+            match OverrideBuilder::new(&bases[0]).add(glob).and_then(|o| o.build()) {
+                Err(error) => {
+                    tracing::error!(%error, "failed to add glob override");
                 }
-                
-                let base = bases.iter().find(|base| entry.path().starts_with(base)).unwrap();
-                let rel_path = entry.path().strip_prefix(&base).unwrap();
-                let is_match = glob_set.is_match(rel_path);
-                tracing::info!(is_match = is_match, rel_path = %rel_path.display(), entry = ?entry, "matching_glob");
-                is_match
-            }});
+                Ok(overrides) => {
+                    walk_builder.overrides(overrides);
+                }
+            }
         }
 
         FileTransfer {
@@ -180,7 +164,7 @@ impl FileTransferIterator {
 /// - If size is 2, return the parent and file name.
 /// - If size is 3, return the grandparent, parent and file name.
 /// - If size is greater than 3, return the last `size` components.
-/// 
+///
 /// Hot path, only supports up to 3 components without allocation.
 fn path_tail(path: &Path, size: usize) -> Option<PathBuf> {
     let mut components = path.components();
@@ -216,7 +200,9 @@ fn path_tail(path: &Path, size: usize) -> Option<PathBuf> {
         n => {
             let mut deque = VecDeque::with_capacity(n);
             let mut counter = 0;
-            while let Some(c) = components.next_back() && counter < n {
+            while let Some(c) = components.next_back()
+                && counter < n
+            {
                 deque.push_front(c.as_os_str());
                 counter += 1;
             }
@@ -338,10 +324,11 @@ mod tests {
         tracing_subscriber::fmt::init();
         let transfer =
             // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config", "/home/kbroom/.config")
-            // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/**/*.lua", "/home/kbroom/.config")
-            FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/awesome/*.lua", "/home/kbroom/.config/test")
+            FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/**/*.lua", "/home/kbroom/.config")
+            // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/awesome/*.lua", "/home/kbroom/.config/test")
+            // FileTransfer::builder("/home/kbroom/dotfiles/awesome/config/awesome/[abc", "/home/kbroom/.config/test") // invalid glob
             // .add_source("/home/kbroom/dotfiles/git/*.yaml")
-                // .dry_run(true)
+                .dry_run(true)
                 .force(true)
                 .action(FileTransferAction::Copy)
                 // .action(FileTransferAction::Symlink)
