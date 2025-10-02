@@ -30,6 +30,10 @@ struct Cli {
     #[arg(short = 'v', action = clap::ArgAction::Count, global=true)]
     verbose: u8,
 
+    /// If an existing destination file is found, overwrite it
+    #[clap(long, action, global = true)]
+    force: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -114,6 +118,7 @@ fn main() -> miette::Result<()> {
         cli.dry_run = args.dry_run,
         cli.verbosity = tracing::field::debug(&verbosity),
         cli.command = args.command.as_str(),
+        cli.force = args.force,
         cwd = std::env::current_dir().unwrap().to_str(),
         args = std::env::args().collect::<Vec<_>>().join(" ")
     );
@@ -132,7 +137,7 @@ fn main() -> miette::Result<()> {
                 latest_log.push("dots-latest.log");
                 eprintln!("see the latest log file at '{}' for details", latest_log.display());
             }
-            let mut dots = Dots::create(args.config, args.dry_run, args.bundles)
+            let mut dots = Dots::create(args.config, args.dry_run, args.force, args.bundles)
                 .inspect_err(trace_dots_error)?;
             let span = tracing::span!(
                 tracing::Level::DEBUG,

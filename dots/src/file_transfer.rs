@@ -92,6 +92,7 @@ pub enum FileTransferAction {
     Copy,
     HardLink,
     Symlink,
+    Delete,
 }
 
 pub struct FileTransfer {
@@ -259,12 +260,15 @@ impl Iterator for FileTransferIterator {
                     let target = FileTransferIterator::get_target_for(&self.target, &entry);
 
                     // ensure they exist in the target
-                    tracing::info!(dry_run = self.dry_run, target = %target.display(), depth = &entry.depth(),  "ensuring directory exists");
-                    if !self.dry_run {
-                        match std::fs::create_dir_all(&target) {
-                            Ok(_) => {}
-                            Err(e) => {
-                                return Some(Err(e.into()));
+                    let is_action_delete = matches!(self.action, FileTransferAction::Delete);
+                    if !is_action_delete {
+                        tracing::info!(dry_run = self.dry_run, target = %target.display(), depth = &entry.depth(),  "ensuring directory exists");
+                        if !self.dry_run {
+                            match std::fs::create_dir_all(&target) {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    return Some(Err(e.into()));
+                                }
                             }
                         }
                     }
@@ -330,6 +334,23 @@ pub fn apply_action(
         FileTransferAction::Symlink => {
             tracing::info!(dry_run = dry_run, source = %source.display(), target = %target.display(), "symlinking");
             if !dry_run { make_symlink(source, target) } else { Ok(()) }
+        }
+        FileTransferAction::Delete => {
+            tracing::info!(dry_run = dry_run, target = %target.display(), "deleting");
+            if !dry_run {
+                let metadata = target.metadata();
+                match metadata {
+                    Ok(m) if m.is_dir() => fs::remove_dir_all(target),
+                    Ok(_) => fs::remove_file(target),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                        tracing::debug!(target = %target.display(), "skipping non-existing file");
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                }
+            } else {
+                Ok(())
+            }
         }
     };
     match result {

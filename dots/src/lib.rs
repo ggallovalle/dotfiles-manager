@@ -28,8 +28,8 @@ mod settings_error;
 pub enum DotsError {
     // #[error("io error: {0}")]
     // IO(#[from] std::io::Error),
-    #[error("fmt error: {0}")]
-    Fmt(#[from] std::fmt::Error),
+    // #[error("fmt error: {0}")]
+    // Fmt(#[from] std::fmt::Error),
     #[error("config not found: {0}")]
     ConfigNotFound(PathBuf),
     #[error(transparent)]
@@ -46,13 +46,13 @@ pub struct Dots {
     /// path to self configuration, relative to $HOME
     path: PathBuf,
     bundles: Option<Vec<String>>,
-    logs: String,
     dry_run: bool,
+    force: bool,
     pub config: Settings,
 }
 
 impl Dots {
-    pub fn create(path: PathBuf, dry_run: bool, bundles: Vec<String>) -> Result<Self, DotsError> {
+    pub fn create(path: PathBuf, dry_run: bool, force: bool, bundles: Vec<String>) -> Result<Self, DotsError> {
         let contents = Arc::new(
             std::fs::read_to_string(&path).map_err(|_| DotsError::ConfigNotFound(path.clone()))?,
         );
@@ -78,8 +78,8 @@ impl Dots {
 
         Ok(Dots {
             path,
-            logs: String::new(),
             dry_run,
+            force,
             bundles: if bundles.is_empty() { None } else { Some(bundles) },
             config,
         })
@@ -103,10 +103,7 @@ impl Dots {
     }
 
     fn log(&mut self, msg: String) -> Result<(), DotsError> {
-        if self.dry_run {
-            println!("{}", msg);
-        }
-        writeln!(self.logs, "{}", msg)?;
+        tracing::info!(msg);
         Ok(())
     }
 
@@ -151,7 +148,6 @@ impl Dots {
     }
 
     pub fn dotfiles_install(&mut self) -> Result<(), DotsError> {
-        self.log("Installing dotfiles...".to_string())?;
         for (name, items) in self.public_bundles() {
             let span = tracing::span!(
                 tracing::Level::DEBUG,
@@ -169,13 +165,12 @@ impl Dots {
                         *recursive,
                         &FileTransferAction::Copy,
                     );
-                } else if let BundleItem::Link { source, target, span } = item {
-                    let is_recursive = source.is_dir();
+                } else if let BundleItem::Link { source, target, span, recursive } = item {
                     tracing::info!(source = %source.display(), target = %target.display(), "bundle_item_link");
                     self.apply_bundle_transfer_item(
                         source,
                         target,
-                        is_recursive,
+                        *recursive,
                         &FileTransferAction::Symlink,
                     );
                 }
@@ -197,17 +192,46 @@ impl Dots {
             for copy_log in FileTransfer::builder(source, target)
                 .dry_run(self.dry_run)
                 .action(action.clone())
+                .force(self.force)
                 .build()
                 .transfer()
             {}
             {}
         } else {
-            file_transfer::apply_action(action, source, target, self.dry_run, false);
+            file_transfer::apply_action(action, source, target, self.dry_run, self.force);
         }
     }
 
     pub fn dotfiles_uninstall(&mut self) -> Result<(), DotsError> {
-        self.log("Uninstalling dotfiles...".to_string())?;
+        for (name, items) in self.public_bundles() {
+            let span = tracing::span!(
+                tracing::Level::DEBUG,
+                "bundle",
+                bundle.id = name,
+                bundle.op = "dotfiles_uninstall"
+            );
+            let _span_guard = span.enter();
+            for item in items {
+                if let BundleItem::Copy { source, target, span, recursive } = item {
+                    tracing::info!(source = %source.display(), target = %target.display(), recursive = recursive, "bundle_item_copy");
+                    self.apply_bundle_transfer_item(
+                        source,
+                        target,
+                        *recursive,
+                        &FileTransferAction::Delete,
+                    );
+                } else if let BundleItem::Link { source, target, span , recursive} = item {
+                    tracing::info!(source = %source.display(), target = %target.display(), "bundle_item_link");
+                    self.apply_bundle_transfer_item(
+                        source,
+                        target,
+                        *recursive,
+                        &FileTransferAction::Delete,
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 }

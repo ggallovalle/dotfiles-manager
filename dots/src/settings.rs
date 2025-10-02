@@ -40,6 +40,7 @@ pub enum BundleItem {
         source: PathBuf,
         target: PathBuf,
         span: SourceSpan,
+        recursive: bool,
     },
     Alias {
         from: String,
@@ -196,7 +197,6 @@ impl Settings {
                     "cp" => {
                         let source_entry = h::arg0(bundle_item)?;
                         let source = dotfiles_dir.join(String::from_kdl_entry(source_entry)?);
-                        let is_recursive = source.is_dir();
                         if !source.exists() {
                             return Err(SettingsDiagnostic::path_not_found(
                                 source_entry,
@@ -206,6 +206,7 @@ impl Settings {
                         let target = h::arg(bundle_item, 1)
                             .map_err(Into::into)
                             .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
+                        let is_recursive = source.is_dir();
                         items.push(BundleItem::Copy {
                             source,
                             target: PathBuf::from(target.value),
@@ -226,10 +227,12 @@ impl Settings {
                         let target = h::arg(bundle_item, 1)
                             .map_err(Into::into)
                             .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
+                        let is_recursive = source.is_dir();
                         items.push(BundleItem::Link {
                             source,
                             target: PathBuf::from(target.value),
                             span: bundle_item.span(),
+                            recursive: is_recursive
                         });
                     }
                     "source" => {

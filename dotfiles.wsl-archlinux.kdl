@@ -24,6 +24,12 @@ package_managers "paru" "pacman"
 // export FISHCONFIG="$HOME/fish"
 env export BASHCONFIG="mnt/c/user/${USER}/bash"
 
+bundle "awesome" {
+    cp "awesome/config/awesome" "${XDG_CONFIG_HOME}/awesome"
+    //   - source: config/awesome
+    // target: '{{ paths.config }}/awesome'
+}
+
 bundle "zsh" {
     env export ZDOTDIR="${XDG_CONFIG_HOME}/zsh"
     // install zsh pm=yay // error, yay not defined in package_managers
