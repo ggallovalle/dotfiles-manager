@@ -6,6 +6,7 @@ use crate::{
     settings::{BundleItem, Settings},
     settings_error::{OneOf, SettingsDiagnostic, SettingsError},
 };
+use ignore::{WalkBuilder, WalkState};
 use indexmap::IndexMap;
 use kdl;
 use miette;
@@ -23,6 +24,7 @@ mod kdl_helpers;
 mod package_manager;
 mod settings;
 mod settings_error;
+mod walker_companion;
 
 #[derive(Error, Debug, miette::Diagnostic, Clone)]
 pub enum DotsError {
@@ -52,7 +54,12 @@ pub struct Dots {
 }
 
 impl Dots {
-    pub fn create(path: PathBuf, dry_run: bool, force: bool, bundles: Vec<String>) -> Result<Self, DotsError> {
+    pub fn create(
+        path: PathBuf,
+        dry_run: bool,
+        force: bool,
+        bundles: Vec<String>,
+    ) -> Result<Self, DotsError> {
         let contents = Arc::new(
             std::fs::read_to_string(&path).map_err(|_| DotsError::ConfigNotFound(path.clone()))?,
         );
@@ -148,34 +155,58 @@ impl Dots {
     }
 
     pub fn dotfiles_install(&mut self) -> Result<(), DotsError> {
-        for (name, items) in self.public_bundles() {
+        let mut walk_builder = walker_companion::WalkerBuilder::new();
+        for (bundle_name, items) in self.public_bundles() {
             let span = tracing::span!(
                 tracing::Level::DEBUG,
                 "bundle",
-                bundle.id = name,
+                bundle.id = bundle_name,
                 bundle.op = "dotfiles_install"
             );
             let _span_guard = span.enter();
+
             for item in items {
-                if let BundleItem::Copy { source, target, span, recursive } = item {
-                    tracing::info!(source = %source.display(), target = %target.display(), recursive = recursive, "bundle_item_copy");
-                    self.apply_bundle_transfer_item(
-                        source,
-                        target,
-                        *recursive,
-                        &FileTransferAction::Copy,
-                    );
-                } else if let BundleItem::Link { source, target, span, recursive } = item {
-                    tracing::info!(source = %source.display(), target = %target.display(), "bundle_item_link");
-                    self.apply_bundle_transfer_item(
-                        source,
-                        target,
-                        *recursive,
-                        &FileTransferAction::Symlink,
-                    );
+                if let BundleItem::Copy { source, target, .. } = item {
+                    walk_builder.add_source(source, target, (bundle_name, "cp"));
+                } else if let BundleItem::Link { source, target, .. } = item {
+                    walk_builder.add_source(source, target, (bundle_name, "ln"));
                 }
             }
         }
+        for entry in walk_builder.build() {
+            let source = entry.path();
+            let depth = entry.depth();
+            let file_type = if entry.file_type().is_dir() { "dir" } else { "file" };
+            let destination = entry.destination();
+            let (bundle_name, op) = entry.meta().data;
+            tracing::info!(src = %source.display(), dst = %destination.display(), depth = depth, file_type = file_type, bundle = bundle_name, op = op, "cp or ln" );
+            // NOTE:  0.11s user 0.08s system 103% cpu 0.183 total
+            // NOTE: with planner 0.11s user 0.07s system 103% cpu 0.179 total
+        }
+
+        let parallel = false;
+
+        // builder.build_parallel().run(|| {
+        //     Box::new(|result| {
+        //         if let Ok(entry) = result {
+        //             if entry.file_type().is_none() {
+        //                 return ignore::WalkState::Continue;
+        //             }
+        //             let source = entry.path();
+        //             let depth = entry.depth();
+        //             let file_type =
+        //                 if entry.file_type().unwrap().is_dir() { "dir" } else { "file" };
+        //             tracing::info!(
+        //                 source = %source.display(),
+        //                 depth = depth,
+        //                 file_type = tracing::field::debug(file_type),
+        //                 "cp or ln"
+        //             );
+        //         }
+        //         ignore::WalkState::Continue
+        //     })
+        // });
+        // NOTE: 0.11s user 0.09s system 102% cpu 0.188 total
 
         Ok(())
     }
@@ -220,7 +251,7 @@ impl Dots {
                         *recursive,
                         &FileTransferAction::Delete,
                     );
-                } else if let BundleItem::Link { source, target, span , recursive} = item {
+                } else if let BundleItem::Link { source, target, span, recursive } = item {
                     tracing::info!(source = %source.display(), target = %target.display(), "bundle_item_link");
                     self.apply_bundle_transfer_item(
                         source,

@@ -232,7 +232,7 @@ impl Settings {
                             source,
                             target: PathBuf::from(target.value),
                             span: bundle_item.span(),
-                            recursive: is_recursive
+                            recursive: is_recursive,
                         });
                     }
                     "source" => {

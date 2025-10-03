@@ -426,3 +426,13 @@ mod tests {
         assert!(false);
     }
 }
+
+use crate::walker_companion::DirEntry;
+
+pub trait FileOp<T> {
+    /// The type of value produced for each visited entry.
+    type Output;
+
+    /// Apply the operation to a single entry.
+    fn apply(&self, entry: &DirEntry<T>) -> Self::Output;
+}
