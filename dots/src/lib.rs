@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use crate::{
-    file_transfer::{FileOp, FileTransfer, FileTransferAction},
+    file_transfer::FileOp,
     package_manager::ManagerIdentifier,
     settings::{BundleItem, Settings},
     settings_error::{OneOf, SettingsDiagnostic, SettingsError},
