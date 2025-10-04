@@ -43,28 +43,6 @@ impl<T> WalkerActionPlanner<T> {
         self.add_source(source);
     }
 
-    // pub fn new(sources: Vec<PathBuf>, target: PathBuf) -> Self {
-    //     let prepared = sources
-    //         .into_iter()
-    //         .map(|src| {
-    //             let name = src
-    //                 .file_name()
-    //                 .expect("source must have a file name")
-    //                 .to_os_string();
-    //             (src, name)
-    //         })
-    //         .collect();
-
-    //     Self {
-    //         target,
-    //         sources: prepared,
-    //         current_idx: 0,
-    //     }
-    // }
-
-    /// Must be called on each DirEntry.
-    /// - `depth` is provided by `ignore::DirEntry::depth()`
-    /// - If depth == 0, we are at the root of the next source
     #[inline(always)]
     pub fn get_dest_path<P: AsRef<Path>>(
         &mut self,
@@ -84,13 +62,17 @@ impl<T> WalkerActionPlanner<T> {
         let (ref source, ref _top_name) = self.sources[self.current_idx - 1];
 
         if let Ok(rel) = path.as_ref().strip_prefix(&source.path) {
+            let target_len = source.target.as_os_str().len();
+            let rel_len = rel.as_os_str().len();
             let mut dest = PathBuf::with_capacity(
-                // source.target.as_os_str().len() + top_name.len() + rel.as_os_str().len() + 2,
-                source.target.as_os_str().len() + rel.as_os_str().len() + 2,
+                target_len + rel_len + 2,
             );
             dest.push(&source.target);
-            // dest.push(top_name);
-            dest.push(rel);
+            // NOTE: trying to push empty OsStr causes dest that is a file to become a dir
+            if rel_len > 0 {
+                dest.push(rel);
+            }
+            // dbg!(&source.target, &rel, &dest);
             Some((source.clone(), dest))
         } else {
             None
@@ -109,10 +91,6 @@ impl<T> DirEntry<T> {
     pub fn path(&self) -> &Path {
         self.dent.path()
     }
-
-    // pub fn source(&self) -> &Path {
-    //     &self.meta.path
-    // }
 
     pub fn destination(&self) -> &Path {
         &self.target

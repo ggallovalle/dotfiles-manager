@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use crate::{
-    file_transfer::{FileTransfer, FileTransferAction},
+    file_transfer::{FileOp, FileTransfer, FileTransferAction},
     package_manager::ManagerIdentifier,
     settings::{BundleItem, Settings},
     settings_error::{OneOf, SettingsDiagnostic, SettingsError},
@@ -156,6 +156,10 @@ impl Dots {
 
     pub fn dotfiles_install(&mut self) -> Result<(), DotsError> {
         let mut walk_builder = walker_companion::WalkerBuilder::new();
+        let mut op_cp = file_transfer::CopyOp::default();
+        op_cp.dry_run(self.dry_run);
+        op_cp.force(self.force);
+
         for (bundle_name, items) in self.public_bundles() {
             let span = tracing::span!(
                 tracing::Level::DEBUG,
@@ -176,12 +180,22 @@ impl Dots {
         for entry in walk_builder.build() {
             let source = entry.path();
             let depth = entry.depth();
-            let file_type = if entry.file_type().is_dir() { "dir" } else { "file" };
+            let file_type = if entry.is_dir() { "dir" } else { "file" };
             let destination = entry.destination();
             let (bundle_name, op) = entry.meta().data;
-            tracing::info!(src = %source.display(), dst = %destination.display(), depth = depth, file_type = file_type, bundle = bundle_name, op = op, "cp or ln" );
+            match op {
+                "cp" => {
+                    let cp_result = op_cp.apply(&entry);
+                    tracing::info!(result = %cp_result, "copy result");
+                }
+                "ln" => {
+                    tracing::info!(src = %source.display(), dst = %destination.display(), depth = depth, file_type = file_type, bundle = bundle_name, op = op, "ln" );
+                }
+                _ => {}
+            }
             // NOTE:  0.11s user 0.08s system 103% cpu 0.183 total
             // NOTE: with planner 0.11s user 0.07s system 103% cpu 0.179 total
+            // NOTE: with copy cargo run -pdots -Fcli -q -- -vvv -c dotfiles.all.kdl dotfiles install  0.24s user 0.15s system 103% cpu 0.376 total
         }
 
         let parallel = false;

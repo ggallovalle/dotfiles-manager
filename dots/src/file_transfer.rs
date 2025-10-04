@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fmt::Display;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -435,4 +436,117 @@ pub trait FileOp<T> {
 
     /// Apply the operation to a single entry.
     fn apply(&self, entry: &DirEntry<T>) -> Self::Output;
+}
+
+pub struct CopyOp {
+    pub dry_run: bool,
+    pub force: bool,
+}
+
+impl Default for CopyOp {
+    fn default() -> Self {
+        Self { dry_run: false, force: false }
+    }
+}
+
+impl CopyOp {
+
+    pub fn dry_run(&mut self, yes: bool) -> &mut Self {
+        self.dry_run = yes;
+        self
+    }
+
+    pub fn force(&mut self, yes: bool) -> &mut Self {
+        self.force = yes;
+        self
+    }
+
+    pub fn copy(&self, src: &Path, dst: &Path) -> CopyOpResult {
+        if self.dry_run {
+            tracing::trace!(src = %src.display(), dst = %dst.display(), "dry run copy");
+            return CopyOpResult::DryRun;
+        }
+
+        match (self.force, dst.exists()) {
+            (false, true) => {
+                tracing::trace!(src = %src.display(), dst = %dst.display(), "skipping existing file");
+                CopyOpResult::SkippedExisting
+            }
+            (true, true) => {
+                tracing::trace!(src = %src.display(), dst = %dst.display(), "removing existing file due to force");
+                match fs::remove_file(dst) {
+                    Err(e) => {
+                        tracing::trace!(src = %src.display(), dst = %dst.display(), error = %e, "error removing existing file due to force");
+                        e.into()
+                    }
+                    Ok(_) => Self::action(src, dst),
+                }
+            }
+            (_, false) => Self::action(src, dst),
+        }
+    }
+
+    fn action(src: &Path, dst: &Path) -> CopyOpResult {
+        match fs::copy(src, dst) {
+            Err(e) => {
+                tracing::error!(src = %src.display(), dst = %dst.display(), error = %e, "copy failed");
+                e.into()
+            }
+            Ok(n) => {
+                tracing::info!(src = %src.display(), dst = %dst.display(), bytes = n, "copied");
+                CopyOpResult::CopiedForced(n)
+            }
+        }
+    }
+
+    fn ensure_dir<T>(&self, entry: &DirEntry<T>, src: &Path, dst: &Path) -> CopyOpResult {
+        match fs::create_dir_all(dst) {
+            Err(e) => {
+                tracing::error!(src = %src.display(), dst = %dst.display(), error = %e, "error creating directory");
+                e.into()
+            }
+            Ok(_) => {
+                tracing::trace!(src = %src.display(), dst = %dst.display(), "ensured directory exists");
+                CopyOpResult::Copied(0)
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum CopyOpResult {
+    Copied(u64),
+    CopiedForced(u64),
+    SkippedExisting,
+    DryRun,
+    Error(io::Error),
+}
+
+impl Display for CopyOpResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CopyOpResult::Copied(n) => write!(f, "copied {} bytes", n),
+            CopyOpResult::CopiedForced(n) => write!(f, "copied {} bytes (forced)", n),
+            CopyOpResult::SkippedExisting => write!(f, "skipped existing file"),
+            CopyOpResult::DryRun => write!(f, "dry run, no action taken"),
+            CopyOpResult::Error(e) => write!(f, "error: {}", e),
+        }
+    }
+}
+
+impl From<io::Error> for CopyOpResult {
+    fn from(e: io::Error) -> Self {
+        CopyOpResult::Error(e)
+    }
+}
+
+impl<T> FileOp<T> for CopyOp {
+    type Output = CopyOpResult;
+
+    fn apply(&self, entry: &DirEntry<T>) -> Self::Output {
+        let src = entry.path();
+        let dst = entry.destination();
+
+        if entry.is_dir() { self.ensure_dir(entry, src, dst) } else { self.copy(src, dst) }
+    }
 }
