@@ -159,6 +159,9 @@ impl Dots {
         let mut op_cp = file_transfer::CopyOp::default();
         op_cp.dry_run(self.dry_run);
         op_cp.force(self.force);
+        let mut op_link = file_transfer::LinkOp::default();
+        op_link.dry_run(self.dry_run);
+        op_link.force(self.force);
 
         for (bundle_name, items) in self.public_bundles() {
             let span = tracing::span!(
@@ -193,7 +196,8 @@ impl Dots {
                     tracing::info!(src = %source.display(), dst = %destination.display(), depth = depth, file_type = file_type, bundle = bundle_name, result = %cp_result, "cp" );
                 }
                 "ln" => {
-                    tracing::info!(src = %source.display(), dst = %destination.display(), depth = depth, file_type = file_type, bundle = bundle_name, op = op, "ln" );
+                    let ln_result = op_link.apply(&entry);
+                    tracing::info!(src = %source.display(), dst = %destination.display(), depth = depth, file_type = file_type, bundle = bundle_name, result = %ln_result, "ln" );
                 }
                 _ => {}
             }
