@@ -4,7 +4,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::walker_companion::DirEntry;
+use crate::dir_entry::DirEntry;
 
 pub trait FileOp<T> {
     /// The type of value produced for each visited entry.

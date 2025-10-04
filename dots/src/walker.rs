@@ -2,15 +2,10 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[derive(Debug)]
-pub struct Source<T> {
-    pub path: PathBuf,
-    pub target: PathBuf,
-    pub data: T,
-}
+use crate::dir_entry::{DirEntry, Source};
 
 #[derive(Debug)]
-pub struct WalkerActionPlanner<T> {
+struct WalkerActionPlanner<T> {
     // target: PathBuf,
     sources: Vec<(Arc<Source<T>>, OsString)>, // (root, top-level name)
     current_idx: usize,
@@ -29,12 +24,12 @@ impl WalkerActionPlanner<()> {
 }
 
 impl<T> WalkerActionPlanner<T> {
-    pub fn add_source(&mut self, source: Source<T>) {
+    fn add_source(&mut self, source: Source<T>) {
         let name = source.path.file_name().expect("source must have a file name").to_os_string();
         self.sources.push((Arc::new(source), name));
     }
 
-    pub fn add<P: AsRef<Path>>(&mut self, src: P, target: P, data: T) {
+    fn add<P: AsRef<Path>>(&mut self, src: P, target: P, data: T) {
         let source = Source {
             path: src.as_ref().to_path_buf(),
             target: target.as_ref().to_path_buf(),
@@ -44,7 +39,7 @@ impl<T> WalkerActionPlanner<T> {
     }
 
     #[inline(always)]
-    pub fn get_dest_path<P: AsRef<Path>>(
+    fn get_dest_path<P: AsRef<Path>>(
         &mut self,
         path: P,
         depth: usize,
@@ -75,51 +70,6 @@ impl<T> WalkerActionPlanner<T> {
         } else {
             None
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct DirEntry<T> {
-    dent: ignore::DirEntry,
-    target: PathBuf,
-    meta: Arc<Source<T>>,
-}
-
-impl<T> DirEntry<T> {
-    pub fn path(&self) -> &Path {
-        self.dent.path()
-    }
-
-    pub fn destination(&self) -> &Path {
-        &self.target
-    }
-
-    pub fn file_type(&self) -> std::fs::FileType {
-        self.dent.file_type().unwrap()
-    }
-
-    pub fn depth(&self) -> usize {
-        self.dent.depth()
-    }
-
-    pub fn file_name(&self) -> &std::ffi::OsStr {
-        self.dent.file_name()
-    }
-
-    pub fn is_file(&self) -> bool {
-        self.file_type().is_file()
-    }
-
-    pub fn is_dir(&self) -> bool {
-        self.file_type().is_dir()
-    }
-
-    pub fn metadata(&self) -> std::fs::Metadata {
-        self.dent.metadata().unwrap()
-    }
-
-    pub fn meta(&self) -> &Source<T> {
-        self.meta.as_ref()
     }
 }
 
@@ -162,7 +112,7 @@ impl<T> Iterator for Walker<T> {
                     if let Some((meta, target)) =
                         self.planner.get_dest_path(dent.path(), dent.depth())
                     {
-                        return Some(DirEntry { dent, target, meta });
+                        return Some(DirEntry::new(dent, target, meta));
                     } else {
                         // entry is outside of any source root
                         continue;

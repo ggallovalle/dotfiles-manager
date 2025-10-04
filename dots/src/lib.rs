@@ -18,13 +18,14 @@ use std::{
 use thiserror::Error;
 use valuable;
 
+mod dir_entry;
 mod env;
 mod file_transfer;
 mod kdl_helpers;
 mod package_manager;
 mod settings;
 mod settings_error;
-mod walker_companion;
+mod walker;
 
 #[derive(Error, Debug, miette::Diagnostic, Clone)]
 pub enum DotsError {
@@ -155,7 +156,7 @@ impl Dots {
     }
 
     pub fn dotfiles_install(&mut self) -> Result<(), DotsError> {
-        let mut walk_builder = walker_companion::WalkerBuilder::new();
+        let mut walk_builder = walker::WalkerBuilder::new();
         let mut op_cp = file_transfer::CopyOp::default();
         op_cp.dry_run(self.dry_run);
         op_cp.force(self.force);
@@ -231,7 +232,7 @@ impl Dots {
     }
 
     pub fn dotfiles_uninstall(&mut self) -> Result<(), DotsError> {
-        let mut walk_builder = walker_companion::WalkerBuilder::new();
+        let mut walk_builder = walker::WalkerBuilder::new();
         let mut op_rm = file_transfer::RemoveOp::default();
         op_rm.dry_run(self.dry_run);
         op_rm.force(self.force);
