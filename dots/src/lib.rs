@@ -177,6 +177,10 @@ impl Dots {
                 }
             }
         }
+
+        // NOTE:  0.11s user 0.08s system 103% cpu 0.183 total
+        // NOTE: with planner 0.11s user 0.07s system 103% cpu 0.179 total
+        // NOTE: with copy cargo run -pdots -Fcli -q -- -vvv -c dotfiles.all.kdl dotfiles install  0.24s user 0.15s system 103% cpu 0.376 total
         for entry in walk_builder.build() {
             let source = entry.path();
             let depth = entry.depth();
@@ -186,16 +190,13 @@ impl Dots {
             match op {
                 "cp" => {
                     let cp_result = op_cp.apply(&entry);
-                    tracing::info!(result = %cp_result, "copy result");
+                    tracing::info!(src = %source.display(), dst = %destination.display(), depth = depth, file_type = file_type, bundle = bundle_name, result = %cp_result, "cp" );
                 }
                 "ln" => {
                     tracing::info!(src = %source.display(), dst = %destination.display(), depth = depth, file_type = file_type, bundle = bundle_name, op = op, "ln" );
                 }
                 _ => {}
             }
-            // NOTE:  0.11s user 0.08s system 103% cpu 0.183 total
-            // NOTE: with planner 0.11s user 0.07s system 103% cpu 0.179 total
-            // NOTE: with copy cargo run -pdots -Fcli -q -- -vvv -c dotfiles.all.kdl dotfiles install  0.24s user 0.15s system 103% cpu 0.376 total
         }
 
         let parallel = false;
@@ -225,55 +226,38 @@ impl Dots {
         Ok(())
     }
 
-    pub fn apply_bundle_transfer_item(
-        &self,
-        source: &Path,
-        target: &Path,
-        recursive: bool,
-        action: &FileTransferAction,
-    ) {
-        // assert!(action == &FileTransferAction::Copy || action == &FileTransferAction::Link);
-        if recursive {
-            for copy_log in FileTransfer::builder(source, target)
-                .dry_run(self.dry_run)
-                .action(action.clone())
-                .force(self.force)
-                .build()
-                .transfer()
-            {}
-            {}
-        } else {
-            file_transfer::apply_action(action, source, target, self.dry_run, self.force);
-        }
-    }
-
     pub fn dotfiles_uninstall(&mut self) -> Result<(), DotsError> {
-        for (name, items) in self.public_bundles() {
-            let span = tracing::span!(
-                tracing::Level::DEBUG,
-                "bundle",
-                bundle.id = name,
-                bundle.op = "dotfiles_uninstall"
-            );
-            let _span_guard = span.enter();
+        let mut walk_builder = walker_companion::WalkerBuilder::new();
+        let mut op_rm = file_transfer::RemoveOp::default();
+        op_rm.dry_run(self.dry_run);
+        op_rm.force(self.force);
+
+        for (bundle_name, items) in self.public_bundles() {
             for item in items {
                 if let BundleItem::Copy { source, target, span, recursive } = item {
-                    tracing::info!(source = %source.display(), target = %target.display(), recursive = recursive, "bundle_item_copy");
-                    self.apply_bundle_transfer_item(
-                        source,
-                        target,
-                        *recursive,
-                        &FileTransferAction::Delete,
-                    );
+                    walk_builder.add_source(source, target, (bundle_name, "rm"));
                 } else if let BundleItem::Link { source, target, span, recursive } = item {
-                    tracing::info!(source = %source.display(), target = %target.display(), "bundle_item_link");
-                    self.apply_bundle_transfer_item(
-                        source,
-                        target,
-                        *recursive,
-                        &FileTransferAction::Delete,
-                    );
+                    walk_builder.add_source(source, target, (bundle_name, "rm"));
                 }
+            }
+        }
+
+        // NOTE: with rm cargo run -pdots -Fcli -q -- -vvv -c dotfiles.all.kdl dotfiles uninstall  0.22s user 0.13s system 102% cpu 0.340 total
+        for entry in walk_builder.build() {
+            let source = entry.path();
+            let depth = entry.depth();
+            let file_type = if entry.is_dir() { "dir" } else { "file" };
+            let destination = entry.destination();
+            let (bundle_name, op) = entry.meta().data;
+            match op {
+                "rm" => {
+                    if entry.is_dir() {
+                        continue;
+                    }
+                    let rm_result = op_rm.apply(&entry);
+                    tracing::info!(src = %source.display(), dst = %destination.display(), depth = depth, file_type = file_type, bundle = bundle_name, result = %rm_result, "rm" );
+                }
+                _ => {}
             }
         }
 

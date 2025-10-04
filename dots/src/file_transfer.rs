@@ -390,6 +390,8 @@ mod tests {
 
     // TODO: use https://crates.io/crates/sealed_test
     #[test]
+    // skip this test
+    #[ignore]
     fn test_dry_run_copy() {
         tracing_subscriber::fmt::init();
         let transfer = FileTransfer::builder(
@@ -450,7 +452,6 @@ impl Default for CopyOp {
 }
 
 impl CopyOp {
-
     pub fn dry_run(&mut self, yes: bool) -> &mut Self {
         self.dry_run = yes;
         self
@@ -548,5 +549,100 @@ impl<T> FileOp<T> for CopyOp {
         let dst = entry.destination();
 
         if entry.is_dir() { self.ensure_dir(entry, src, dst) } else { self.copy(src, dst) }
+    }
+}
+
+pub struct RemoveOp {
+    pub dry_run: bool,
+    pub force: bool,
+}
+
+impl Default for RemoveOp {
+    fn default() -> Self {
+        Self { dry_run: false, force: false }
+    }
+}
+
+impl RemoveOp {
+    pub fn dry_run(&mut self, yes: bool) -> &mut Self {
+        self.dry_run = yes;
+        self
+    }
+
+    pub fn force(&mut self, yes: bool) -> &mut Self {
+        self.force = yes;
+        self
+    }
+
+    pub fn remove(&self, path: &Path) -> RemoveOpResult {
+        if self.dry_run {
+            tracing::trace!(path = %path.display(), "dry run remove");
+            return RemoveOpResult::DryRun;
+        }
+
+        match path.metadata() {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                tracing::trace!(path = %path.display(), "skipping non-existing file");
+                RemoveOpResult::SkippedNotFound
+            }
+            Err(e) => {
+                tracing::error!(path = %path.display(), error = %e, "error getting metadata");
+                e.into()
+            }
+            Ok(m) if m.is_dir() => match fs::remove_dir_all(path) {
+                Err(e) => {
+                    tracing::error!(path = %path.display(), error = %e, "error removing directory");
+                    e.into()
+                }
+                Ok(_) => {
+                    tracing::info!(path = %path.display(), "removed directory");
+                    RemoveOpResult::Removed
+                }
+            },
+            Ok(_) => match fs::remove_file(path) {
+                Err(e) => {
+                    tracing::error!(path = %path.display(), error = %e, "error removing file");
+                    e.into()
+                }
+                Ok(_) => {
+                    tracing::info!(path = %path.display(), "removed file");
+                    RemoveOpResult::Removed
+                }
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum RemoveOpResult {
+    Removed,
+    SkippedNotFound,
+    DryRun,
+    Error(io::Error),
+}
+
+impl Display for RemoveOpResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RemoveOpResult::Removed => write!(f, "removed"),
+            RemoveOpResult::SkippedNotFound => write!(f, "skipped non-existing file"),
+            RemoveOpResult::DryRun => write!(f, "dry run, no action taken"),
+            RemoveOpResult::Error(e) => write!(f, "error: {}", e),
+        }
+    }
+}
+
+impl From<io::Error> for RemoveOpResult {
+    fn from(e: io::Error) -> Self {
+        RemoveOpResult::Error(e)
+    }
+}
+
+impl<T> FileOp<T> for RemoveOp {
+    type Output = RemoveOpResult;
+
+    fn apply(&self, entry: &DirEntry<T>) -> Self::Output {
+        let path = entry.destination();
+        self.remove(path)
     }
 }

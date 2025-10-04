@@ -64,9 +64,7 @@ impl<T> WalkerActionPlanner<T> {
         if let Ok(rel) = path.as_ref().strip_prefix(&source.path) {
             let target_len = source.target.as_os_str().len();
             let rel_len = rel.as_os_str().len();
-            let mut dest = PathBuf::with_capacity(
-                target_len + rel_len + 2,
-            );
+            let mut dest = PathBuf::with_capacity(target_len + rel_len + 2);
             dest.push(&source.target);
             // NOTE: trying to push empty OsStr causes dest that is a file to become a dir
             if rel_len > 0 {
