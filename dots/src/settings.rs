@@ -206,10 +206,16 @@ impl Settings {
                         let target = h::arg(bundle_item, 1)
                             .map_err(Into::into)
                             .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
+                        let target_path = if target.replacement_count > 0 {
+                            PathBuf::from(&target.value)
+                        } else {
+                            let path = PathBuf::from(env_map.get("HOME").unwrap());
+                            path.join(&target.value)
+                        };
                         let is_recursive = source.is_dir();
                         items.push(BundleItem::Copy {
                             source,
-                            target: PathBuf::from(target.value),
+                            target: target_path,
                             span: bundle_item.span(),
                             recursive: is_recursive,
                         });
@@ -227,10 +233,16 @@ impl Settings {
                         let target = h::arg(bundle_item, 1)
                             .map_err(Into::into)
                             .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
+                        let target_path = if target.replacement_count > 0 {
+                            PathBuf::from(&target.value)
+                        } else {
+                            let path = PathBuf::from(env_map.get("HOME").unwrap());
+                            path.join(&target.value)
+                        };
                         let is_recursive = source.is_dir();
                         items.push(BundleItem::Link {
                             source,
-                            target: PathBuf::from(target.value),
+                            target: target_path,
                             span: bundle_item.span(),
                             recursive: is_recursive,
                         });
