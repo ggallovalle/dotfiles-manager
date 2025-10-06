@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use crate::settings_error::SettingsDiagnostic;
+use super::ConfigDiagnostic;
 use kdl::{KdlDiagnostic, KdlDocument, KdlEntry, KdlIdentifier, KdlNode, KdlValue};
 use miette::SourceSpan;
 
@@ -232,10 +232,10 @@ impl Deref for KdlBool {
 macro_rules! impl_from_kdl_entry_for_enum {
     ($ty:ty) => {
         impl $ty {
-            fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, SettingsDiagnostic> {
+            fn from_kdl_entry(entry: &kdl::KdlEntry) -> Result<Self, ConfigDiagnostic> {
                 let value = String::from_kdl_entry(entry)?;
                 value.parse::<$ty>().map_err(|_| {
-                    SettingsDiagnostic::unknown_variant(
+                    ConfigDiagnostic::unknown_variant(
                         entry,
                         value,
                         OneOf::from_iter(<$ty>::VARIANTS),

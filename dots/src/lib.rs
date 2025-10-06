@@ -1,10 +1,9 @@
 #![allow(unused)]
 
 use crate::{
+    config::{BundleItem, Config, ConfigDiagnostic, ConfigError, OneOf},
     file_transfer::FileOp,
     package_manager::ManagerIdentifier,
-    settings::{BundleItem, Settings},
-    settings_error::{OneOf, SettingsDiagnostic, SettingsError},
 };
 use ignore::{WalkBuilder, WalkState};
 use indexmap::IndexMap;
@@ -18,13 +17,11 @@ use std::{
 use thiserror::Error;
 use valuable;
 
+mod config;
 mod dir_entry;
 mod env;
 mod file_transfer;
-mod kdl_helpers;
 mod package_manager;
-mod settings;
-mod settings_error;
 mod walker;
 
 #[derive(Error, Debug, miette::Diagnostic, Clone)]
@@ -37,7 +34,7 @@ pub enum DotsError {
     ConfigNotFound(PathBuf),
     #[error(transparent)]
     #[diagnostic(transparent)]
-    Settings(#[from] crate::settings_error::SettingsError),
+    Config(#[from] ConfigError),
     #[error("bundle not found: {0}")]
     #[diagnostic()]
     BundleNotFound(String, #[help] String),
@@ -51,7 +48,7 @@ pub struct Dots {
     bundles: Option<Vec<String>>,
     dry_run: bool,
     force: bool,
-    pub config: Settings,
+    pub config: Config,
 }
 
 impl Dots {
@@ -65,15 +62,15 @@ impl Dots {
             std::fs::read_to_string(&path).map_err(|_| DotsError::ConfigNotFound(path.clone()))?,
         );
         let kdl_doc = kdl::KdlDocument::parse(&contents).map_err(|e| {
-            DotsError::Settings(SettingsError::from_file(
+            DotsError::Config(ConfigError::from_file(
                 &path,
                 contents.clone(),
                 e.diagnostics.into_iter().map(Into::into).collect(),
             ))
         })?;
 
-        let config = Settings::from_kdl(kdl_doc).map_err(|err| {
-            DotsError::Settings(SettingsError::from_file(&path, contents.clone(), vec![err]))
+        let config = Config::from_kdl(kdl_doc).map_err(|err| {
+            DotsError::Config(ConfigError::from_file(&path, contents.clone(), vec![err]))
         })?;
         for bundle in &bundles {
             if !config.bundles.contains_key(bundle) {

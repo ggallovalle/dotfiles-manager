@@ -1,4 +1,4 @@
-use crate::kdl_helpers::KdlItemRef;
+use super::kdl_helpers::KdlItemRef;
 use kdl;
 use miette::Diagnostic;
 use miette::LabeledSpan;
@@ -10,31 +10,31 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
-pub struct SettingsError {
+pub struct ConfigError {
     pub input: Arc<String>,
-    pub diagnostics: Vec<SettingsDiagnostic>,
+    pub diagnostics: Vec<ConfigDiagnostic>,
     named_source: Option<miette::NamedSource<Arc<String>>>, // store it here to support Diagnostic::source_code
 }
 
-impl SettingsError {
-    pub fn from_str(input: impl Into<Arc<String>>, diagnostics: Vec<SettingsDiagnostic>) -> Self {
+impl ConfigError {
+    pub fn from_str(input: impl Into<Arc<String>>, diagnostics: Vec<ConfigDiagnostic>) -> Self {
         let input = input.into();
-        SettingsError { input, diagnostics, named_source: None }
+        ConfigError { input, diagnostics, named_source: None }
     }
 
     pub fn from_file(
         name: &PathBuf,
         input: Arc<String>,
-        diagnostics: Vec<SettingsDiagnostic>,
+        diagnostics: Vec<ConfigDiagnostic>,
     ) -> Self {
         let named_source = Some(
             miette::NamedSource::new(name.to_string_lossy(), input.clone()).with_language("kdl"),
         );
-        SettingsError { input, diagnostics, named_source }
+        ConfigError { input, diagnostics, named_source }
     }
 }
 
-impl SettingsError {
+impl ConfigError {
     pub fn diagnostics_jsonable(&self) -> Vec<HashMap<String, String>> {
         self.diagnostics
             .iter()
@@ -56,19 +56,19 @@ impl SettingsError {
     }
 }
 
-impl fmt::Display for SettingsError {
+impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(name) = &self.named_source {
-            write!(f, "settings error in {}", name.name())
+            write!(f, "config error in {}", name.name())
         } else {
-            write!(f, "settings error")
+            write!(f, "config error")
         }
     }
 }
 
-impl std::error::Error for SettingsError {}
+impl std::error::Error for ConfigError {}
 
-impl Diagnostic for SettingsError {
+impl Diagnostic for ConfigError {
     fn source_code(&self) -> Option<&dyn miette::SourceCode> {
         if let Some(name) = &self.named_source { Some(name) } else { Some(&*self.input) }
     }
@@ -79,7 +79,7 @@ impl Diagnostic for SettingsError {
 }
 
 #[derive(Debug, Clone)]
-pub enum SettingsDiagnostic {
+pub enum ConfigDiagnostic {
     UnknownVariant {
         variant: String,
         expected: OneOf,
@@ -93,13 +93,13 @@ pub enum SettingsDiagnostic {
     ParseError(kdl::KdlDiagnostic),
 }
 
-impl SettingsDiagnostic {
+impl ConfigDiagnostic {
     pub fn unknown_variant(
         source: impl Into<KdlItemRef>,
         variant: impl Into<String>,
         expected: impl Into<OneOf>,
     ) -> Self {
-        SettingsDiagnostic::UnknownVariant {
+        ConfigDiagnostic::UnknownVariant {
             variant: variant.into(),
             expected: expected.into(),
             source: source.into(),
@@ -113,7 +113,7 @@ impl SettingsDiagnostic {
         expected: impl Into<OneOf>,
         source_ref: impl Into<KdlItemRef>,
     ) -> Self {
-        SettingsDiagnostic::UnknownVariant {
+        ConfigDiagnostic::UnknownVariant {
             variant: variant.into(),
             expected: expected.into(),
             source: source.into(),
@@ -122,14 +122,14 @@ impl SettingsDiagnostic {
     }
 
     pub fn path_not_found(source: impl Into<KdlItemRef>, path: impl Into<String>) -> Self {
-        SettingsDiagnostic::PathNotFound { path: path.into(), source: source.into() }
+        ConfigDiagnostic::PathNotFound { path: path.into(), source: source.into() }
     }
 
     pub fn span(&self) -> SourceSpan {
         match self {
-            SettingsDiagnostic::UnknownVariant { source, .. } => source.span_value().clone(),
-            SettingsDiagnostic::ParseError(error) => error.span.clone(),
-            SettingsDiagnostic::PathNotFound { source, .. } => source.span_value().clone(),
+            ConfigDiagnostic::UnknownVariant { source, .. } => source.span_value().clone(),
+            ConfigDiagnostic::ParseError(error) => error.span.clone(),
+            ConfigDiagnostic::PathNotFound { source, .. } => source.span_value().clone(),
         }
     }
 
@@ -139,22 +139,22 @@ impl SettingsDiagnostic {
 
     fn kind(&self) -> &str {
         match self {
-            SettingsDiagnostic::UnknownVariant { source_ref, .. } if source_ref.is_some() => {
+            ConfigDiagnostic::UnknownVariant { source_ref, .. } if source_ref.is_some() => {
                 "unknown variant reference"
             }
-            SettingsDiagnostic::UnknownVariant { .. } => "unknown variant",
-            SettingsDiagnostic::ParseError(_) => "parse error",
-            SettingsDiagnostic::PathNotFound { .. } => "path not found",
+            ConfigDiagnostic::UnknownVariant { .. } => "unknown variant",
+            ConfigDiagnostic::ParseError(_) => "parse error",
+            ConfigDiagnostic::PathNotFound { .. } => "path not found",
         }
     }
 }
 
-impl std::error::Error for SettingsDiagnostic {}
+impl std::error::Error for ConfigDiagnostic {}
 
-impl fmt::Display for SettingsDiagnostic {
+impl fmt::Display for ConfigDiagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SettingsDiagnostic::UnknownVariant { variant, expected, source, .. } => {
+            ConfigDiagnostic::UnknownVariant { variant, expected, source, .. } => {
                 write!(
                     f,
                     "unknown variant `{}` at {}, expected {}",
@@ -163,26 +163,26 @@ impl fmt::Display for SettingsDiagnostic {
                     expected
                 )
             }
-            SettingsDiagnostic::PathNotFound { path, .. } => {
+            ConfigDiagnostic::PathNotFound { path, .. } => {
                 write!(f, "path not found: {}", path)
             }
-            SettingsDiagnostic::ParseError(error) => {
+            ConfigDiagnostic::ParseError(error) => {
                 write!(f, "{}", error)
             }
         }
     }
 }
 
-impl From<kdl::KdlDiagnostic> for SettingsDiagnostic {
+impl From<kdl::KdlDiagnostic> for ConfigDiagnostic {
     fn from(error: kdl::KdlDiagnostic) -> Self {
-        SettingsDiagnostic::ParseError(error)
+        ConfigDiagnostic::ParseError(error)
     }
 }
 
-impl Diagnostic for SettingsDiagnostic {
+impl Diagnostic for ConfigDiagnostic {
     fn severity(&self) -> Option<miette::Severity> {
         match self {
-            SettingsDiagnostic::ParseError(error) => return Some(error.severity),
+            ConfigDiagnostic::ParseError(error) => return Some(error.severity),
             _ => {}
         };
 
@@ -191,29 +191,27 @@ impl Diagnostic for SettingsDiagnostic {
 
     fn help<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
         match self {
-            SettingsDiagnostic::UnknownVariant { expected, .. } => {
+            ConfigDiagnostic::UnknownVariant { expected, .. } => {
                 return Some(Box::new(format!("expected {}", expected)));
             }
-            SettingsDiagnostic::UnknownVariant {
-                expected, source_ref: Some(source_ref), ..
-            } => {
+            ConfigDiagnostic::UnknownVariant { expected, source_ref: Some(source_ref), .. } => {
                 return Some(Box::new(format!(
                     "define the variant in the referenced {} or select {}",
                     source_ref.at_str(),
                     expected
                 )));
             }
-            SettingsDiagnostic::PathNotFound { .. } => {
+            ConfigDiagnostic::PathNotFound { .. } => {
                 return Some(Box::new("ensure the path exists".to_string()));
             }
-            SettingsDiagnostic::ParseError(error) => return error.help(),
+            ConfigDiagnostic::ParseError(error) => return error.help(),
         };
         None
     }
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
         match self {
-            SettingsDiagnostic::ParseError(error) => error.labels(),
+            ConfigDiagnostic::ParseError(error) => error.labels(),
             Self::UnknownVariant { source: span, source_ref: Some(source_ref), .. } => {
                 let here = self.miette_default_label();
                 let reference = LabeledSpan::at(

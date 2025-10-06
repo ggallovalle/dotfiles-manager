@@ -157,7 +157,7 @@ fn main() -> miette::Result<()> {
 
 fn trace_dots_error(e: &dots::DotsError) {
     match e {
-        dots::DotsError::Settings(inner) => {
+        dots::DotsError::Config(inner) => {
             tracing::error!(
                 diagnostics = tracing::field::valuable(&inner.diagnostics_jsonable()),
                 "{}",
@@ -227,6 +227,7 @@ fn init_tracing(verbosity: &Option<tracing::Level>) -> scopeguard::ScopeGuard<()
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
     use tracing_subscriber::fmt::writer::BoxMakeWriter;
     use tracing_subscriber::prelude::*;
+    let is_debug = matches!(verbosity, Some(tracing::Level::DEBUG) | Some(tracing::Level::TRACE));
 
     let file_appender = {
         RollingFileAppender::builder()
@@ -251,8 +252,10 @@ fn init_tracing(verbosity: &Option<tracing::Level>) -> scopeguard::ScopeGuard<()
 
     let console_layer = match verbosity {
         None => None,
-        Some(_) => {
+        Some(level) => {
             let stderr_layer = tracing_subscriber::fmt::Layer::default()
+                .with_thread_ids(is_debug)
+                .with_thread_names(is_debug)
                 .with_writer(BoxMakeWriter::new(std::io::stderr));
             Some(stderr_layer)
         }
@@ -265,6 +268,8 @@ fn init_tracing(verbosity: &Option<tracing::Level>) -> scopeguard::ScopeGuard<()
     let file_layer = tracing_subscriber::fmt::Layer::default()
         .json()
         .with_current_span(false)
+        .with_thread_ids(is_debug)
+        .with_thread_names(is_debug)
         .fmt_fields(tracing_subscriber::fmt::format::JsonFields::default())
         .with_writer(file_appender.and(latest_appender));
 

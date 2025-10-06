@@ -2,19 +2,23 @@ use crate::{
     diag,
     env::{self, ExpandValue},
     impl_from_kdl_entry_for_enum,
-    kdl_helpers::{self as h, FromKdlEntry, KdlDocumentExt},
     package_manager::{self, ManagerIdentifier},
-    settings_error::{OneOf, SettingsDiagnostic},
 };
 use indexmap::IndexMap;
 use kdl::{KdlDiagnostic, KdlDocument, KdlEntry, KdlNode, KdlValue};
+use kdl_helpers::{self as h, FromKdlEntry, KdlDocumentExt};
 use miette::{Severity, SourceSpan};
 use semver::{self, VersionReq};
 use std::path::PathBuf;
 use strum::{self, VariantNames};
 
+mod error;
+mod kdl_helpers;
+
+pub use error::{ConfigDiagnostic, ConfigError, OneOf};
+
 #[derive(Debug, Clone)]
-pub struct Settings {
+pub struct Config {
     pub env: IndexMap<String, String>,
     env_inherited_keys: Vec<String>,
     pub dotfiles_dir: PathBuf,
@@ -88,8 +92,8 @@ impl_from_kdl_entry_for_enum!(Shell);
 impl_from_kdl_entry_for_enum!(Position);
 impl_from_kdl_entry_for_enum!(ManagerIdentifier);
 
-impl Settings {
-    pub fn from_kdl(document: KdlDocument) -> Result<Self, SettingsDiagnostic> {
+impl Config {
+    pub fn from_kdl(document: KdlDocument) -> Result<Self, ConfigDiagnostic> {
         let mut env_map = env::base();
         let env_inherited_keys = env_map.keys().cloned().collect::<Vec<_>>();
         let dotfiles_dir = document
@@ -157,7 +161,7 @@ impl Settings {
                         if let Some((mgr_entry, ref mgr)) = manager
                             && !package_managers.contains_key(mgr)
                         {
-                            return Err(SettingsDiagnostic::unknown_variant_reference(
+                            return Err(ConfigDiagnostic::unknown_variant_reference(
                                 mgr_entry,
                                 mgr.to_string(),
                                 OneOf::from_iter(package_managers.keys()),
@@ -198,7 +202,7 @@ impl Settings {
                         let source_entry = h::arg0(bundle_item)?;
                         let source = dotfiles_dir.join(String::from_kdl_entry(source_entry)?);
                         if !source.exists() {
-                            return Err(SettingsDiagnostic::path_not_found(
+                            return Err(ConfigDiagnostic::path_not_found(
                                 source_entry,
                                 source.display().to_string(),
                             ));
@@ -225,7 +229,7 @@ impl Settings {
                         let source_entry = h::arg0(bundle_item)?;
                         let source = dotfiles_dir.join(String::from_kdl_entry(source_entry)?);
                         if !source.exists() {
-                            return Err(SettingsDiagnostic::path_not_found(
+                            return Err(ConfigDiagnostic::path_not_found(
                                 source_entry,
                                 source.display().to_string(),
                             ));
@@ -265,7 +269,7 @@ impl Settings {
                     }
                     env::ExpandValue::ENV_NODE => { /* already handled */ }
                     _ => {
-                        return Err(SettingsDiagnostic::unknown_variant(
+                        return Err(ConfigDiagnostic::unknown_variant(
                             bundle_item,
                             bundle_item.name().value(),
                             OneOf::from_iter(&[
@@ -285,7 +289,7 @@ impl Settings {
             bundles.insert(bundle_name, items);
         }
 
-        Ok(Settings { env: env_map, env_inherited_keys, dotfiles_dir, bundles, package_managers })
+        Ok(Config { env: env_map, env_inherited_keys, dotfiles_dir, bundles, package_managers })
     }
 }
 
@@ -295,11 +299,11 @@ impl env::ExpandValue {
     fn apply_exports_to_env(
         document: &impl h::KdlDocumentExt,
         env_map: &mut IndexMap<String, String>,
-    ) -> Result<(), SettingsDiagnostic> {
+    ) -> Result<(), ConfigDiagnostic> {
         for node in document.get_children_named(Self::ENV_NODE) {
             let (mode_entry, mode) = h::arg0(node).and_then(String::from_kdl_entry_keep)?;
             if !matches!(mode.as_str(), "export" | "import") {
-                return Err(SettingsDiagnostic::unknown_variant(
+                return Err(ConfigDiagnostic::unknown_variant(
                     mode_entry,
                     mode,
                     OneOf::from_iter(&["export", "import"]),
@@ -316,10 +320,10 @@ impl env::ExpandValue {
     fn from_kdl_entry(
         entry: &KdlEntry,
         env: &IndexMap<String, String>,
-    ) -> Result<Self, SettingsDiagnostic> {
+    ) -> Result<Self, ConfigDiagnostic> {
         match env::expand(&String::from_kdl_entry(entry)?, env) {
             Err(e) => {
-                Err(SettingsDiagnostic::unknown_variant(entry, e.var, OneOf::from_iter(env.keys())))
+                Err(ConfigDiagnostic::unknown_variant(entry, e.var, OneOf::from_iter(env.keys())))
             }
             Ok(expanded) => Ok(expanded),
         }
@@ -328,12 +332,12 @@ impl env::ExpandValue {
     pub fn from_kdl_entry_dir_exists(
         entry: &KdlEntry,
         env: &IndexMap<String, String>,
-    ) -> Result<PathBuf, SettingsDiagnostic> {
+    ) -> Result<PathBuf, ConfigDiagnostic> {
         let expanded = Self::from_kdl_entry(entry, env)?;
         let path = PathBuf::from(&expanded.value);
         match path.metadata() {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                return Err(SettingsDiagnostic::path_not_found(entry, path.display().to_string()));
+                return Err(ConfigDiagnostic::path_not_found(entry, path.display().to_string()));
             }
             Err(err) => {
                 return Err(diag!(
