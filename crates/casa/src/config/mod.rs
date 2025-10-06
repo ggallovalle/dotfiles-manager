@@ -1,6 +1,6 @@
 use crate::{
     diag,
-    env::{self, ExpandValue},
+    env::{self, Env},
     impl_from_kdl_entry_for_enum,
     package_manager::{self, ManagerIdentifier},
 };
@@ -20,8 +20,7 @@ pub use kdl_helpers::KdlItemRef;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub env: IndexMap<String, String>,
-    env_inherited_keys: Vec<String>,
+    pub env: Env,
     pub dotfiles_dir: PathBuf,
     pub package_managers: IndexMap<ManagerIdentifier, PathBuf>,
     pub bundles: IndexMap<String, Vec<BundleItem>>,
@@ -95,13 +94,13 @@ impl_from_kdl_entry_for_enum!(ManagerIdentifier);
 
 impl Config {
     pub fn from_kdl(document: KdlDocument) -> Result<Self, ConfigDiagnostic> {
-        let mut env_map = env::base();
-        let env_inherited_keys = env_map.keys().cloned().collect::<Vec<_>>();
+        let mut env_map = Env::empty();
+        env_map.apply_xdg();
         let dotfiles_dir = document
             .get_node_required_one("dotfiles_dir")
             .and_then(h::arg0)
             .map_err(Into::into)
-            .and_then(|entry| env::ExpandValue::from_kdl_entry_dir_exists(entry, &env_map))?;
+            .and_then(|entry| env_map.expand_kdl_entry_dir_exists(entry))?;
 
         let package_managers_node = document.get_node_required_one("package_managers")?;
         let mut package_managers = IndexMap::new();
@@ -131,7 +130,7 @@ impl Config {
             }
         }
 
-        env::ExpandValue::apply_exports_to_env(&document, &mut env_map)?;
+        env_map.apply_exports_to_env(&document)?;
 
         let mut bundles: IndexMap<String, Vec<BundleItem>> = IndexMap::new();
 
@@ -148,7 +147,7 @@ impl Config {
                 )
                 .into());
             }
-            env::ExpandValue::apply_exports_to_env(bundle, &mut env_map)?;
+            env_map.apply_exports_to_env(bundle)?;
             let mut items = Vec::new();
 
             for bundle_item in bundle.get_children() {
@@ -192,10 +191,10 @@ impl Config {
                         let repo = h::arg0(bundle_item).and_then(String::from_kdl_entry)?;
                         let target = h::arg(bundle_item, 1)
                             .map_err(Into::into)
-                            .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
+                            .and_then(|entry| env_map.expand_kdl_entry(entry))?;
                         items.push(BundleItem::Clone {
                             repo,
-                            target: PathBuf::from(target.value),
+                            target: PathBuf::from(target),
                             span: bundle_item.span(),
                         });
                     }
@@ -210,13 +209,14 @@ impl Config {
                         }
                         let target = h::arg(bundle_item, 1)
                             .map_err(Into::into)
-                            .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
-                        let target_path = if target.replacement_count > 0 {
-                            PathBuf::from(&target.value)
-                        } else {
-                            let path = PathBuf::from(env_map.get("HOME").unwrap());
-                            path.join(&target.value)
-                        };
+                            .and_then(|entry| env_map.expand_kdl_entry(entry))?;
+                        // let target_path = if target.replacement_count > 0 {
+                        //     PathBuf::from(&target.value)
+                        // } else {
+                        //     let path = PathBuf::from(env_map.get("HOME").unwrap());
+                        //     path.join(&target.value)
+                        // };
+                        let target_path = PathBuf::from(&target);
                         let is_recursive = source.is_dir();
                         items.push(BundleItem::Copy {
                             source,
@@ -237,13 +237,14 @@ impl Config {
                         }
                         let target = h::arg(bundle_item, 1)
                             .map_err(Into::into)
-                            .and_then(|entry| env::ExpandValue::from_kdl_entry(entry, &env_map))?;
-                        let target_path = if target.replacement_count > 0 {
-                            PathBuf::from(&target.value)
-                        } else {
-                            let path = PathBuf::from(env_map.get("HOME").unwrap());
-                            path.join(&target.value)
-                        };
+                            .and_then(|entry| env_map.expand_kdl_entry(entry))?;
+                        // let target_path = if target.replacement_count > 0 {
+                        //     PathBuf::from(&target.value)
+                        // } else {
+                        //     let path = PathBuf::from(env_map.get("HOME").unwrap());
+                        //     path.join(&target.value)
+                        // };
+                        let target_path = PathBuf::from(&target);
                         let is_recursive = source.is_dir();
                         items.push(BundleItem::Link {
                             source,
@@ -268,7 +269,7 @@ impl Config {
                             span: bundle_item.span(),
                         });
                     }
-                    env::ExpandValue::ENV_NODE => { /* already handled */ }
+                    Env::ENV_NODE => { /* already handled */ }
                     _ => {
                         return Err(ConfigDiagnostic::unknown_variant(
                             bundle_item,
@@ -280,7 +281,7 @@ impl Config {
                                 "alias",
                                 "clone",
                                 "source",
-                                env::ExpandValue::ENV_NODE,
+                                Env::ENV_NODE,
                             ]),
                         ));
                     }
@@ -290,16 +291,16 @@ impl Config {
             bundles.insert(bundle_name, items);
         }
 
-        Ok(Config { env: env_map, env_inherited_keys, dotfiles_dir, bundles, package_managers })
+        Ok(Config { env: env_map, dotfiles_dir, bundles, package_managers })
     }
 }
 
-impl env::ExpandValue {
+impl Env {
     const ENV_NODE: &str = "env";
 
     fn apply_exports_to_env(
+        &mut self,
         document: &impl h::KdlDocumentExt,
-        env_map: &mut IndexMap<String, String>,
     ) -> Result<(), ConfigDiagnostic> {
         for node in document.get_children_named(Self::ENV_NODE) {
             let (mode_entry, mode) = h::arg0(node).and_then(String::from_kdl_entry_keep)?;
@@ -312,30 +313,35 @@ impl env::ExpandValue {
             }
 
             let (id, entry) = h::prop_at(node, 1)?;
-            let v = env::ExpandValue::from_kdl_entry(entry, env_map)?;
-            env_map.insert(id.value().to_string(), v.value);
+            let v = self.expand_kdl_entry(entry)?;
+            self.insert(
+                id.value().to_string(),
+                env::EnvValue::String(v),
+                env::EnvItemMeta {
+                    inherited: mode == "import",
+                    exported: mode == "export",
+                    span: Some(mode_entry.into()),
+                },
+            );
         }
         Ok(())
     }
 
-    fn from_kdl_entry(
-        entry: &KdlEntry,
-        env: &IndexMap<String, String>,
-    ) -> Result<Self, ConfigDiagnostic> {
-        match env::expand(&String::from_kdl_entry(entry)?, env) {
+    fn expand_kdl_entry(&self, entry: &KdlEntry) -> Result<String, ConfigDiagnostic> {
+        match self.expand(&String::from_kdl_entry(entry)?) {
             Err(e) => {
-                Err(ConfigDiagnostic::unknown_variant(entry, e.var, OneOf::from_iter(env.keys())))
+                Err(ConfigDiagnostic::env_expand_error(entry, e, OneOf::from_iter(self.keys())))
             }
             Ok(expanded) => Ok(expanded),
         }
     }
 
-    pub fn from_kdl_entry_dir_exists(
+    pub fn expand_kdl_entry_dir_exists(
+        &self,
         entry: &KdlEntry,
-        env: &IndexMap<String, String>,
     ) -> Result<PathBuf, ConfigDiagnostic> {
-        let expanded = Self::from_kdl_entry(entry, env)?;
-        let path = PathBuf::from(&expanded.value);
+        let expanded = self.expand_kdl_entry(entry)?;
+        let path = PathBuf::from(&expanded);
         match path.metadata() {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 return Err(ConfigDiagnostic::path_not_found(entry, path.display().to_string()));
@@ -343,7 +349,7 @@ impl env::ExpandValue {
             Err(err) => {
                 return Err(diag!(
                     entry.span(),
-                    message = format!("failed to access path {}: {}", expanded.value, err),
+                    message = format!("failed to access path {}: {}", expanded, err),
                     help =
                         "check the path permissions or system state, or update the configuration",
                     severity = Severity::Warning
@@ -353,7 +359,7 @@ impl env::ExpandValue {
             Ok(meta) if !meta.is_dir() => {
                 return Err(diag!(
                     entry.span(),
-                    message = format!("path is not a directory: {}", expanded.value),
+                    message = format!("path is not a directory: {}", expanded),
                     help = "ensure the path is a directory, or update the configuration",
                     severity = Severity::Warning
                 )

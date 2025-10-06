@@ -143,7 +143,9 @@ fn main() -> miette::Result<()> {
                 tracing::Level::DEBUG,
                 "config",
                 config.dotfiles_dir = dots.config.dotfiles_dir.to_str(),
-                config.env = tracing::field::valuable(&dots.config.env.keys().collect::<Vec<_>>()),
+                config.env = tracing::field::valuable(
+                    &dots.config.env.keys().into_iter().collect::<Vec<_>>()
+                ),
                 config.bundles =
                     tracing::field::valuable(&dots.config.bundles.keys().collect::<Vec<_>>()),
             );

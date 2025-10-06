@@ -91,6 +91,11 @@ pub enum ConfigDiagnostic {
         source: KdlItemRef,
     },
     ParseError(kdl::KdlDiagnostic),
+    EnvExpandError {
+        error: subst::Error,
+        source: KdlItemRef,
+        expected: OneOf,
+    },
 }
 
 impl ConfigDiagnostic {
@@ -125,11 +130,22 @@ impl ConfigDiagnostic {
         ConfigDiagnostic::PathNotFound { path: path.into(), source: source.into() }
     }
 
+    pub fn env_expand_error(
+        source: impl Into<KdlItemRef>,
+        error: subst::Error,
+        expected: impl Into<OneOf>,
+    ) -> Self {
+        ConfigDiagnostic::EnvExpandError { error, source: source.into(), expected: expected.into() }
+    }
+}
+
+impl ConfigDiagnostic {
     pub fn span(&self) -> SourceSpan {
         match self {
             ConfigDiagnostic::UnknownVariant { source, .. } => source.span_value().clone(),
             ConfigDiagnostic::ParseError(error) => error.span.clone(),
             ConfigDiagnostic::PathNotFound { source, .. } => source.span_value().clone(),
+            ConfigDiagnostic::EnvExpandError { source, .. } => source.span_value().clone(),
         }
     }
 
@@ -145,11 +161,20 @@ impl ConfigDiagnostic {
             ConfigDiagnostic::UnknownVariant { .. } => "unknown variant",
             ConfigDiagnostic::ParseError(_) => "parse error",
             ConfigDiagnostic::PathNotFound { .. } => "path not found",
+            ConfigDiagnostic::EnvExpandError { .. } => "environment expansion error",
         }
     }
 }
 
-impl std::error::Error for ConfigDiagnostic {}
+impl std::error::Error for ConfigDiagnostic {
+    fn cause(&self) -> Option<&dyn std::error::Error> {
+        match self {
+            ConfigDiagnostic::ParseError(error) => Some(error),
+            ConfigDiagnostic::EnvExpandError { error, .. } => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl fmt::Display for ConfigDiagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -168,6 +193,14 @@ impl fmt::Display for ConfigDiagnostic {
             }
             ConfigDiagnostic::ParseError(error) => {
                 write!(f, "{}", error)
+            }
+            ConfigDiagnostic::EnvExpandError { error, source, expected } => {
+                write!(
+                    f,
+                    "failed to expand environment variable at {}: {}",
+                    source.at_value_str(),
+                    error,
+                )
             }
         }
     }
@@ -205,6 +238,9 @@ impl Diagnostic for ConfigDiagnostic {
                 return Some(Box::new("ensure the path exists".to_string()));
             }
             ConfigDiagnostic::ParseError(error) => return error.help(),
+            ConfigDiagnostic::EnvExpandError { expected, .. } => {
+                return Some(Box::new(format!("expected {}", expected)));
+            }
         };
         None
     }
