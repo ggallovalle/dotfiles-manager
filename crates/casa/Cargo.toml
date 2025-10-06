@@ -1,5 +1,5 @@
 [package]
-name = "dots"
+name = "casa"
 version = "0.1.0"
 edition = "2024"
 authors = ["Gerson Gallo <ggallovalle@gmail.com>"]
@@ -69,6 +69,6 @@ default = ["cli"]
 cli = ["clap", "clap_complete", "tracing-subscriber", "tracing-appender", "scopeguard"]
 
 [[bin]]
-name = "dots"
-path = "src/bin/dots.rs"
+name = "casa"
+path = "src/bin/casa.rs"
 required-features = ["cli"]

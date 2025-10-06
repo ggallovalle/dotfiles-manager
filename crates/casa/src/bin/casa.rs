@@ -1,6 +1,6 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete;
-use dots::Dots;
+use casa::Dots;
 use miette;
 use scopeguard;
 use std::path::PathBuf;
@@ -9,7 +9,7 @@ use tracing;
 #[derive(Parser, Debug)]
 #[command(
     version,
-    name = "dots",
+    name = "casa",
     about = "A dotfiles manager",
     author = "Gerson G. <ggallovalle@gmail.com>"
 )]
@@ -19,7 +19,7 @@ struct Cli {
     bundles: Vec<String>,
 
     /// Path to the config file
-    #[clap(short, long, default_value = "dotfiles.kdl", value_name = "FILE", global = true)]
+    #[clap(short, long, default_value = "casa.kdl", value_name = "FILE", global = true)]
     config: PathBuf,
 
     /// Dry run mode
@@ -124,7 +124,7 @@ fn main() -> miette::Result<()> {
     );
     let _span_guard = span.enter();
 
-    tracing::debug!("starting dots");
+    tracing::debug!("starting casa");
     match args.command {
         Commands::GenerateCompletions { shell } => {
             let mut cmd = Cli::command();
@@ -134,7 +134,7 @@ fn main() -> miette::Result<()> {
         _ => {
             if verbosity.is_none() {
                 let mut latest_log = get_logs_dir();
-                latest_log.push("dots-latest.log");
+                latest_log.push("casa-latest.log");
                 eprintln!("see the latest log file at '{}' for details", latest_log.display());
             }
             let mut dots = Dots::create(args.config, args.dry_run, args.force, args.bundles)
@@ -155,9 +155,9 @@ fn main() -> miette::Result<()> {
     Ok(())
 }
 
-fn trace_dots_error(e: &dots::DotsError) {
+fn trace_dots_error(e: &casa::DotsError) {
     match e {
-        dots::DotsError::Config(inner) => {
+        casa::DotsError::Config(inner) => {
             tracing::error!(
                 diagnostics = tracing::field::valuable(&inner.diagnostics_jsonable()),
                 "{}",
@@ -170,7 +170,7 @@ fn trace_dots_error(e: &dots::DotsError) {
     }
 }
 
-fn execute(command: Commands, dots: &mut Dots) -> Result<(), dots::DotsError> {
+fn execute(command: Commands, dots: &mut Dots) -> Result<(), casa::DotsError> {
     match command {
         Commands::Doctor => {
             dots.dependencies_doctor()?;
@@ -213,7 +213,7 @@ fn execute(command: Commands, dots: &mut Dots) -> Result<(), dots::DotsError> {
 
 fn get_data_dir() -> PathBuf {
     let mut data_home = dirs_next::data_dir().unwrap();
-    data_home.push("dots");
+    data_home.push("casa");
     data_home
 }
 
@@ -232,7 +232,7 @@ fn init_tracing(verbosity: &Option<tracing::Level>) -> scopeguard::ScopeGuard<()
     let file_appender = {
         RollingFileAppender::builder()
             .rotation(Rotation::MINUTELY)
-            .filename_suffix("dots.log")
+            .filename_suffix("casa.log")
             .max_log_files(5)
             .build(get_logs_dir())
             .unwrap()
@@ -240,7 +240,7 @@ fn init_tracing(verbosity: &Option<tracing::Level>) -> scopeguard::ScopeGuard<()
 
     let (latest_appender, latest_appender_guard) = {
         let mut latest_log = get_logs_dir();
-        latest_log.push("dots-latest.log");
+        latest_log.push("casa-latest.log");
         let file = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
@@ -252,7 +252,7 @@ fn init_tracing(verbosity: &Option<tracing::Level>) -> scopeguard::ScopeGuard<()
 
     let console_layer = match verbosity {
         None => None,
-        Some(level) => {
+        Some(_) => {
             let stderr_layer = tracing_subscriber::fmt::Layer::default()
                 .with_thread_ids(is_debug)
                 .with_thread_names(is_debug)
@@ -262,7 +262,7 @@ fn init_tracing(verbosity: &Option<tracing::Level>) -> scopeguard::ScopeGuard<()
     };
 
     let env_filter = tracing_subscriber::filter::EnvFilter::from_default_env().add_directive(
-        format!("dots={}", verbosity.unwrap_or(tracing::Level::WARN)).parse().unwrap(),
+        format!("casa={}", verbosity.unwrap_or(tracing::Level::WARN)).parse().unwrap(),
     );
 
     let file_layer = tracing_subscriber::fmt::Layer::default()
