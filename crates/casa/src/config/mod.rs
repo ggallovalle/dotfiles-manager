@@ -303,26 +303,102 @@ impl Env {
         document: &impl h::KdlDocumentExt,
     ) -> Result<(), ConfigDiagnostic> {
         for node in document.get_children_named(Self::ENV_NODE) {
-            let (mode_entry, mode) = h::arg0(node).and_then(String::from_kdl_entry_keep)?;
-            if !matches!(mode.as_str(), "export" | "import") {
-                return Err(ConfigDiagnostic::unknown_variant(
-                    mode_entry,
-                    mode,
-                    OneOf::from_iter(&["export", "import"]),
-                ));
-            }
-
-            let (id, entry) = h::prop_at(node, 1)?;
-            let v = self.expand_kdl_entry(entry)?;
-            self.insert(
-                id.value().to_string(),
-                env::EnvValue::String(v),
-                env::EnvItemMeta {
-                    inherited: mode == "import",
-                    exported: mode == "export",
-                    span: Some(mode_entry.into()),
-                },
-            );
+            match h::arg0(node) {
+                Ok(entry) => {
+                    let (mode_entry, mode) = h::arg0(node).and_then(String::from_kdl_entry_keep)?;
+                    match mode.as_str() {
+                        "export" => {
+                            // env export KEY=VALUE
+                            let (id, entry) = h::prop_at(node, 1)?;
+                            let v = self.expand_kdl_entry(entry)?;
+                            self.insert(
+                                id.value().to_string(),
+                                env::EnvValue::String(v),
+                                env::EnvItemMeta {
+                                    inherited: false,
+                                    exported: true,
+                                    span: Some(entry.into()),
+                                },
+                            );
+                        }
+                        "import" => {
+                            let (id, entry) = h::prop_at(node, 1)?;
+                            match std::env::var(id.value()) {
+                                Ok(value) => {
+                                    self.insert(
+                                        id.value().to_string(),
+                                        env::EnvValue::String(value),
+                                        env::EnvItemMeta {
+                                            inherited: false,
+                                            exported: true,
+                                            span: Some(entry.into()),
+                                        },
+                                    );
+                                }
+                                Err(std::env::VarError::NotPresent) => {
+                                    let v = self.expand_kdl_entry(entry)?;
+                                    if v.is_empty() {
+                                        return Err(diag!(
+                                            entry.span(),
+                                            message = format!(
+                                                "environment variable '{}' not found",
+                                                id.value()
+                                            ),
+                                            help = "ensure the environment variable is set, or provide a default value",
+                                            severity = Severity::Warning
+                                        )
+                                        .into());
+                                    }
+                                    self.insert(
+                                        id.value().to_string(),
+                                        env::EnvValue::String(v),
+                                        env::EnvItemMeta {
+                                            inherited: false,
+                                            exported: false,
+                                            span: Some(entry.into()),
+                                        },
+                                    );
+                                }
+                                Err(std::env::VarError::NotUnicode(value)) => {
+                                    return Err(diag!(
+                                        entry.span(),
+                                        message = format!(
+                                            "environment variable '{}' is not valid unicode: {:?}",
+                                            id.value(),
+                                            value
+                                        ),
+                                        help = "ensure the environment variable is valid unicode",
+                                        severity = Severity::Warning
+                                    )
+                                    .into());
+                                }
+                            }
+                        }
+                        _ => {
+                            return Err(ConfigDiagnostic::unknown_variant(
+                                mode_entry,
+                                mode,
+                                OneOf::from_iter(&["export", "import"]),
+                            ));
+                        }
+                    }
+                }
+                Err(_) => {
+                    // env KEY=VALUE
+                    // no export or import, just set the value
+                    let (id, entry) = h::prop0(node)?;
+                    let v = self.expand_kdl_entry(entry)?;
+                    self.insert(
+                        id.value().to_string(),
+                        env::EnvValue::String(v),
+                        env::EnvItemMeta {
+                            inherited: false,
+                            exported: false,
+                            span: Some(entry.into()),
+                        },
+                    );
+                }
+            };
         }
         Ok(())
     }

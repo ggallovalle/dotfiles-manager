@@ -130,15 +130,12 @@ dependencies = [
  "clap_complete",
  "dirs-next",
  "either",
- "globset",
  "ignore",
  "indexmap",
  "kdl",
- "lazy_static",
  "miette",
  "minijinja",
  "pretty_assertions",
- "regex",
  "scopeguard",
  "semver",
  "strum",
@@ -668,18 +665,6 @@ dependencies = [
  "getrandom",
  "libredox",
  "thiserror 1.0.69",
-]
-
-[[package]]
-name = "regex"
-version = "1.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b5288124840bee7b386bc413c487869b360b2b4ec421ea56425128692f2a82c"
-dependencies = [
- "aho-corasick",
- "memchr",
- "regex-automata",
- "regex-syntax",
 ]
 
 [[package]]
