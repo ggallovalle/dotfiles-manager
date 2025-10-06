@@ -1,6 +1,6 @@
+use casa::Dots;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete;
-use casa::Dots;
 use miette;
 use scopeguard;
 use std::path::PathBuf;

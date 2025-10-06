@@ -22,6 +22,7 @@ mod dir_entry;
 mod env;
 mod file_transfer;
 mod package_manager;
+mod template;
 mod walker;
 
 #[derive(Error, Debug, miette::Diagnostic, Clone)]

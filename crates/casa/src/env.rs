@@ -1,7 +1,11 @@
 use indexmap::IndexMap;
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
+
+use subst;
+
+use crate::config::KdlItemRef;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExpandValue {
@@ -162,5 +166,103 @@ mod tests {
         assert_eq!(err, ExpandError { var: "XDG_CONFIG_HOME".to_string(), offset: 8, len: 16 });
         let err = expand("Not Found ${HOME}", &env).unwrap_err();
         assert_eq!(err, ExpandError { var: "HOME".to_string(), offset: 10, len: 7 });
+    }
+}
+
+#[derive(Debug)]
+pub enum EnvValue {
+    /// plain string
+    String(String),
+    /// single path
+    Path(String),
+}
+
+impl AsRef<str> for EnvValue {
+    fn as_ref(&self) -> &str {
+        match self {
+            EnvValue::String(s) => s.as_ref(),
+            EnvValue::Path(p) => p.as_ref(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct EnvItemMeta {
+    inherited: bool,
+    exported: bool,
+    span: Option<KdlItemRef>,
+}
+
+#[derive(Debug)]
+pub struct Env {
+    inner: Arc<IndexMap<String, Arc<(EnvValue, EnvItemMeta)>>>,
+    parent: Option<Arc<IndexMap<String, Arc<(EnvValue, EnvItemMeta)>>>>,
+}
+
+impl Env {
+    pub fn empty() -> Self {
+        Env { inner: Arc::new(IndexMap::new()), parent: None }
+    }
+
+    pub fn child(&self) -> Self {
+        Env { inner: Arc::new(IndexMap::new()), parent: Some(self.inner.clone()) }
+    }
+
+    pub fn get<T: AsRef<str>>(&self, key: T) -> Option<&(EnvValue, EnvItemMeta)> {
+        if let Some(v) = self.inner.get(key.as_ref()) {
+            Some(v)
+        } else if let Some(parent) = &self.parent {
+            parent.get(key.as_ref()).map(|v| &**v)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_str<T: AsRef<str>>(&self, key: T) -> Option<&str> {
+        self.get(key).map(|(v, _)| v.as_ref())
+    }
+
+    pub fn len(&self) -> usize {
+        let parent_len = self.parent.as_ref().map(|p| p.len()).unwrap_or(0);
+        parent_len + self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn insert(&mut self, key: String, value: EnvValue, meta: EnvItemMeta) {
+        Arc::make_mut(&mut self.inner).insert(key, Arc::new((value, meta)));
+    }
+
+    pub fn insert_simple(&mut self, key: &str, value: &str) {
+        let meta = EnvItemMeta { inherited: false, exported: false, span: None };
+        Arc::make_mut(&mut self.inner)
+            .insert(key.to_owned(), Arc::new((EnvValue::String(value.to_owned()), meta)));
+    }
+
+    pub fn keys(&self) -> HashSet<&String> {
+        let mut keys = HashSet::with_capacity(self.len());
+        for key in self.inner.keys() {
+            keys.insert(key);
+        }
+        if let Some(parent) = &self.parent {
+            for key in parent.keys() {
+                keys.insert(key);
+            }
+        }
+        keys
+    }
+
+    pub fn expand<T: AsRef<str>>(&self, source: T) -> Result<String, subst::Error> {
+        subst::substitute(source.as_ref(), self)
+    }
+}
+
+impl<'a> subst::VariableMap<'a> for Env {
+    type Value = &'a str;
+
+    fn get(&'a self, key: &str) -> Option<Self::Value> {
+        self.get_str(key)
     }
 }

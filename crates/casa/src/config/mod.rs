@@ -16,6 +16,7 @@ mod error;
 mod kdl_helpers;
 
 pub use error::{ConfigDiagnostic, ConfigError, OneOf};
+pub use kdl_helpers::KdlItemRef;
 
 #[derive(Debug, Clone)]
 pub struct Config {
