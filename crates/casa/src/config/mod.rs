@@ -22,46 +22,23 @@ pub use kdl_helpers::KdlItemRef;
 pub struct Config {
     pub env: Env,
     pub dotfiles_dir: PathBuf,
-    pub package_managers: IndexMap<ManagerIdentifier, PathBuf>,
+    // pub package_managers: IndexMap<ManagerIdentifier, PathBuf>,
     pub bundles: IndexMap<String, Vec<BundleItem>>,
+    bundles_envs: IndexMap<String, Env>,
 }
 
 #[derive(Debug, Clone)]
 pub enum BundleItem {
-    Install {
-        name: String,
-        manager: Option<ManagerIdentifier>,
-        version: Option<semver::VersionReq>,
-        span: SourceSpan,
-    },
-    Copy {
-        source: PathBuf,
-        target: PathBuf,
-        span: SourceSpan,
-        recursive: bool,
-    },
-    Link {
-        source: PathBuf,
-        target: PathBuf,
-        span: SourceSpan,
-        recursive: bool,
-    },
-    Alias {
-        from: String,
-        to: String,
-        span: SourceSpan,
-    },
-    Clone {
-        repo: String,
-        target: PathBuf,
-        span: SourceSpan,
-    },
-    Source {
-        snippet: String,
-        position: Position,
-        shell: Shell,
-        span: SourceSpan,
-    },
+    // Install {
+    //     name: String,
+    //     manager: Option<ManagerIdentifier>,
+    //     version: Option<semver::VersionReq>,
+    //     span: SourceSpan,
+    // },
+    Copy { source: PathBuf, target: PathBuf, span: SourceSpan, recursive: bool },
+    Link { source: PathBuf, target: PathBuf, span: SourceSpan, recursive: bool },
+    Alias { from: String, to: String, span: SourceSpan },
+    Source { snippet: String, position: Position, shell: Shell, span: SourceSpan },
 }
 
 #[derive(Debug, Clone, PartialEq, strum::EnumString, strum::VariantNames)]
@@ -74,8 +51,10 @@ pub enum Shell {
     Fish,
     #[strum(serialize = "pwsh")]
     PowerShell,
-    #[strum(serialize = "other")]
-    Other,
+    #[strum(serialize = "nushell")]
+    Nushell,
+    #[strum(transparent)]
+    Other(String),
 }
 
 #[derive(Debug, Clone, PartialEq, strum::EnumString, strum::VariantNames)]
@@ -93,6 +72,10 @@ impl_from_kdl_entry_for_enum!(Position);
 impl_from_kdl_entry_for_enum!(ManagerIdentifier);
 
 impl Config {
+    pub fn get_env_for_bundle<T : AsRef<str>>(&self, bundle:T) -> &Env {
+        self.bundles_envs.get(bundle.as_ref()).unwrap_or(&self.env)
+    }
+
     pub fn from_kdl(document: KdlDocument) -> Result<Self, ConfigDiagnostic> {
         let mut env_map = Env::empty();
         env_map.apply_xdg();
@@ -102,37 +85,38 @@ impl Config {
             .map_err(Into::into)
             .and_then(|entry| env_map.expand_kdl_entry_dir_exists(entry))?;
 
-        let package_managers_node = document.get_node_required_one("package_managers")?;
-        let mut package_managers = IndexMap::new();
-        for manager_entry in h::args(package_managers_node)? {
-            let manager = ManagerIdentifier::from_kdl_entry(manager_entry)?;
-            match manager.which() {
-                Some(path) => {
-                    if let Some(_) = package_managers.insert(manager.clone(), path) {
-                        return Err(diag!(
-                            manager_entry.span(),
-                            message =
-                                format!("package manager '{}' can only be specified once", manager)
-                        )
-                        .into());
-                    }
-                }
-                None => {
-                    return Err(diag!(
-                        manager_entry.span(),
-                        message =
-                            format!("package manager '{}' not found in PATH", manager.to_string()),
-                        help = "ensure the package manager is installed and available in PATH",
-                        severity = Severity::Warning
-                    )
-                    .into());
-                }
-            }
-        }
+        // let package_managers_node = document.get_node_required_one("package_managers")?;
+        // let mut package_managers = IndexMap::new();
+        // for manager_entry in h::args(package_managers_node)? {
+        //     let manager = ManagerIdentifier::from_kdl_entry(manager_entry)?;
+        //     match manager.which() {
+        //         Some(path) => {
+        //             if let Some(_) = package_managers.insert(manager.clone(), path) {
+        //                 return Err(diag!(
+        //                     manager_entry.span(),
+        //                     message =
+        //                         format!("package manager '{}' can only be specified once", manager)
+        //                 )
+        //                 .into());
+        //             }
+        //         }
+        //         None => {
+        //             return Err(diag!(
+        //                 manager_entry.span(),
+        //                 message =
+        //                     format!("package manager '{}' not found in PATH", manager.to_string()),
+        //                 help = "ensure the package manager is installed and available in PATH",
+        //                 severity = Severity::Warning
+        //             )
+        //             .into());
+        //         }
+        //     }
+        // }
 
         env_map.apply_exports_to_env(&document)?;
 
         let mut bundles: IndexMap<String, Vec<BundleItem>> = IndexMap::new();
+        let mut bundles_envs = IndexMap::new();
 
         for bundle in document.get_children_named("bundle") {
             let bundle_name = h::arg0(bundle).and_then(String::from_kdl_entry)?;
@@ -147,54 +131,44 @@ impl Config {
                 )
                 .into());
             }
-            env_map.apply_exports_to_env(bundle)?;
             let mut items = Vec::new();
+            let mut env_for_bundle: Option<Env> = None;
 
             for bundle_item in bundle.get_children() {
+                let current_env_map = env_for_bundle.as_ref().unwrap_or(&env_map);
                 match bundle_item.name().value() {
-                    "install" => {
-                        let name = h::arg0(bundle_item).and_then(String::from_kdl_entry)?;
-                        let manager = bundle_item
-                            .entry("pm")
-                            .map(ManagerIdentifier::from_kdl_entry_keep)
-                            .transpose()?;
-                        if let Some((mgr_entry, ref mgr)) = manager
-                            && !package_managers.contains_key(mgr)
-                        {
-                            return Err(ConfigDiagnostic::unknown_variant_reference(
-                                mgr_entry,
-                                mgr.to_string(),
-                                OneOf::from_iter(package_managers.keys()),
-                                package_managers_node,
-                            ));
-                        }
-                        let version = bundle_item
-                            .entry("version")
-                            .map(VersionReq::from_kdl_entry)
-                            .transpose()?;
-                        items.push(BundleItem::Install {
-                            name,
-                            manager: manager.map(|(_, m)| m),
-                            version,
-                            span: bundle_item.span(),
-                        });
-                    }
+                    // "install" => {
+                    //     let name = h::arg0(bundle_item).and_then(String::from_kdl_entry)?;
+                    //     let manager = bundle_item
+                    //         .entry("pm")
+                    //         .map(ManagerIdentifier::from_kdl_entry_keep)
+                    //         .transpose()?;
+                    //     if let Some((mgr_entry, ref mgr)) = manager
+                    //         && !package_managers.contains_key(mgr)
+                    //     {
+                    //         return Err(ConfigDiagnostic::unknown_variant_reference(
+                    //             mgr_entry,
+                    //             mgr.to_string(),
+                    //             OneOf::from_iter(package_managers.keys()),
+                    //             package_managers_node,
+                    //         ));
+                    //     }
+                    //     let version = bundle_item
+                    //         .entry("version")
+                    //         .map(VersionReq::from_kdl_entry)
+                    //         .transpose()?;
+                    //     items.push(BundleItem::Install {
+                    //         name,
+                    //         manager: manager.map(|(_, m)| m),
+                    //         version,
+                    //         span: bundle_item.span(),
+                    //     });
+                    // }
                     "alias" => {
                         let (key, value) = h::prop0(bundle_item)?;
                         items.push(BundleItem::Alias {
                             from: key.value().to_string(),
                             to: String::from_kdl_entry(value)?,
-                            span: bundle_item.span(),
-                        });
-                    }
-                    "clone" => {
-                        let repo = h::arg0(bundle_item).and_then(String::from_kdl_entry)?;
-                        let target = h::arg(bundle_item, 1)
-                            .map_err(Into::into)
-                            .and_then(|entry| env_map.expand_kdl_entry(entry))?;
-                        items.push(BundleItem::Clone {
-                            repo,
-                            target: PathBuf::from(target),
                             span: bundle_item.span(),
                         });
                     }
@@ -209,7 +183,7 @@ impl Config {
                         }
                         let target = h::arg(bundle_item, 1)
                             .map_err(Into::into)
-                            .and_then(|entry| env_map.expand_kdl_entry(entry))?;
+                            .and_then(|entry| current_env_map.expand_kdl_entry(entry))?;
                         // let target_path = if target.replacement_count > 0 {
                         //     PathBuf::from(&target.value)
                         // } else {
@@ -237,7 +211,7 @@ impl Config {
                         }
                         let target = h::arg(bundle_item, 1)
                             .map_err(Into::into)
-                            .and_then(|entry| env_map.expand_kdl_entry(entry))?;
+                            .and_then(|entry| current_env_map.expand_kdl_entry(entry))?;
                         // let target_path = if target.replacement_count > 0 {
                         //     PathBuf::from(&target.value)
                         // } else {
@@ -269,17 +243,27 @@ impl Config {
                             span: bundle_item.span(),
                         });
                     }
-                    Env::ENV_NODE => { /* already handled */ }
+                    Env::ENV_NODE => {
+                        match env_for_bundle.as_mut() {
+                            Some(e) => {
+                                e.apply_node(bundle_item)?;
+                            }
+                            None => {
+                                let mut e = env_map.child();
+                                e.apply_node(bundle_item)?;
+                                env_for_bundle = Some(e);
+                            }
+                        }
+                    }
                     _ => {
                         return Err(ConfigDiagnostic::unknown_variant(
                             bundle_item,
                             bundle_item.name().value(),
                             OneOf::from_iter(&[
-                                "install",
+                                // "install",
                                 "cp",
                                 "ln",
                                 "alias",
-                                "clone",
                                 "source",
                                 Env::ENV_NODE,
                             ]),
@@ -288,10 +272,14 @@ impl Config {
                 }
             }
 
+            if let Some(e) = env_for_bundle {
+                bundles_envs.insert(bundle_name.clone(), e);
+            }
             bundles.insert(bundle_name, items);
         }
 
-        Ok(Config { env: env_map, dotfiles_dir, bundles, package_managers })
+        // Ok(Config { env: env_map, dotfiles_dir, bundles, package_managers })
+        Ok(Config { env: env_map, dotfiles_dir, bundles, bundles_envs })
     }
 }
 
@@ -303,103 +291,116 @@ impl Env {
         document: &impl h::KdlDocumentExt,
     ) -> Result<(), ConfigDiagnostic> {
         for node in document.get_children_named(Self::ENV_NODE) {
-            match h::arg0(node) {
-                Ok(entry) => {
-                    let (mode_entry, mode) = h::arg0(node).and_then(String::from_kdl_entry_keep)?;
-                    match mode.as_str() {
-                        "export" => {
-                            // env export KEY=VALUE
-                            let (id, entry) = h::prop_at(node, 1)?;
-                            let v = self.expand_kdl_entry(entry)?;
-                            self.insert(
-                                id.value().to_string(),
-                                env::EnvValue::String(v),
-                                env::EnvItemMeta {
-                                    inherited: false,
-                                    exported: true,
-                                    span: Some(entry.into()),
-                                },
-                            );
-                        }
-                        "import" => {
-                            let (id, entry) = h::prop_at(node, 1)?;
-                            match std::env::var(id.value()) {
-                                Ok(value) => {
-                                    self.insert(
-                                        id.value().to_string(),
-                                        env::EnvValue::String(value),
-                                        env::EnvItemMeta {
-                                            inherited: false,
-                                            exported: true,
-                                            span: Some(entry.into()),
-                                        },
-                                    );
-                                }
-                                Err(std::env::VarError::NotPresent) => {
-                                    let v = self.expand_kdl_entry(entry)?;
-                                    if v.is_empty() {
-                                        return Err(diag!(
-                                            entry.span(),
-                                            message = format!(
-                                                "environment variable '{}' not found",
-                                                id.value()
-                                            ),
-                                            help = "ensure the environment variable is set, or provide a default value",
-                                            severity = Severity::Warning
-                                        )
-                                        .into());
-                                    }
-                                    self.insert(
-                                        id.value().to_string(),
-                                        env::EnvValue::String(v),
-                                        env::EnvItemMeta {
-                                            inherited: false,
-                                            exported: false,
-                                            span: Some(entry.into()),
-                                        },
-                                    );
-                                }
-                                Err(std::env::VarError::NotUnicode(value)) => {
-                                    return Err(diag!(
-                                        entry.span(),
+            self.apply_node(node)?;
+        }
+        Ok(())
+    }
+
+    fn apply_node(&mut self, node: &KdlNode) -> Result<(), ConfigDiagnostic> {
+        let mode_or_env_kdl = h::entry_at(node, 0)?;
+        match mode_or_env_kdl.name() {
+            Some(id) => {
+                // env KEY=VALUE
+                // no export or import, just set the value
+                let env_kdl = mode_or_env_kdl;
+                let v = self.expand_kdl_entry(env_kdl)?;
+                self.insert(
+                    id.value().to_string(),
+                    env::EnvValue::String(v),
+                    env::EnvItemMeta {
+                        inherited: false,
+                        exported: false,
+                        span: Some(env_kdl.into()),
+                    },
+                );
+            }
+            None => {
+                let mode_kdl = mode_or_env_kdl;
+                let mode = h::as_str(mode_kdl)?;
+                match mode {
+                    "export" => {
+                        // env export KEY=VALUE
+                        let (env_key, env_kdl) = h::prop_at(node, 1)?;
+                        let v = self.expand_kdl_entry(env_kdl)?;
+                        self.insert(
+                            env_key.value().to_string(),
+                            env::EnvValue::String(v),
+                            env::EnvItemMeta {
+                                inherited: false,
+                                exported: true,
+                                span: Some(env_kdl.into()),
+                            },
+                        );
+                    }
+                    "import" => {
+                        let env_kdl = h::entry_at(node, 1)?;
+                        let (key, default) = match env_kdl.name() {
+                            Some(id) => {
+                                let default = h::as_str(env_kdl)?;
+                                (id.value(), if default.is_empty() { None } else { Some(default) })
+                            }
+                            None => (h::as_str(env_kdl)?, None),
+                        };
+                        match (std::env::var(key), default) {
+                            (Ok(value), _) => {
+                                self.insert(
+                                    key.to_string(),
+                                    env::EnvValue::String(value),
+                                    env::EnvItemMeta {
+                                        inherited: false,
+                                        exported: true,
+                                        span: Some(env_kdl.into()),
+                                    },
+                                );
+                            }
+                            (Err(std::env::VarError::NotPresent), None) => {
+                                return Err(diag!(
+                                        env_kdl.span(),
                                         message = format!(
-                                            "environment variable '{}' is not valid unicode: {:?}",
-                                            id.value(),
-                                            value
+                                            "environment variable '{}' not found",
+                                            key
                                         ),
-                                        help = "ensure the environment variable is valid unicode",
+                                        help = "ensure the environment variable is set, or provide a default value",
                                         severity = Severity::Warning
                                     )
                                     .into());
-                                }
+                            }
+                            (Err(std::env::VarError::NotPresent), Some(def)) => {
+                                self.insert(
+                                    key.to_string(),
+                                    env::EnvValue::String(def.to_string()),
+                                    env::EnvItemMeta {
+                                        inherited: false,
+                                        exported: false,
+                                        span: Some(env_kdl.into()),
+                                    },
+                                );
+                            }
+                            (Err(std::env::VarError::NotUnicode(value)), _) => {
+                                return Err(diag!(
+                                    env_kdl.span(),
+                                    message = format!(
+                                        "environment variable '{}' is not valid unicode: {:?}",
+                                        key, value
+                                    ),
+                                    help = "ensure the environment variable is valid unicode",
+                                    severity = Severity::Warning
+                                )
+                                .into());
                             }
                         }
-                        _ => {
-                            return Err(ConfigDiagnostic::unknown_variant(
-                                mode_entry,
-                                mode,
-                                OneOf::from_iter(&["export", "import"]),
-                            ));
-                        }
+                    }
+                    _ => {
+                        return Err(ConfigDiagnostic::unknown_variant(
+                            mode_kdl,
+                            mode,
+                            OneOf::from_iter(&["export", "import"]),
+                        ));
                     }
                 }
-                Err(_) => {
-                    // env KEY=VALUE
-                    // no export or import, just set the value
-                    let (id, entry) = h::prop0(node)?;
-                    let v = self.expand_kdl_entry(entry)?;
-                    self.insert(
-                        id.value().to_string(),
-                        env::EnvValue::String(v),
-                        env::EnvItemMeta {
-                            inherited: false,
-                            exported: false,
-                            span: Some(entry.into()),
-                        },
-                    );
-                }
-            };
-        }
+            }
+        };
+
         Ok(())
     }
 

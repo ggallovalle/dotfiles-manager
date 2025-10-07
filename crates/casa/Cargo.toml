@@ -16,7 +16,6 @@ which = "8.0.0"
 semver = "1.0"
 
 indexmap = "2.11.1"
-either = "1.15.0"
 
 kdl = "6.3.4"
 thiserror = "2.0.16"

@@ -76,6 +76,21 @@ pub fn inspect_entry_ty_name(entry: &KdlEntry) -> &str {
     }
 }
 
+pub fn entry_at<'a>(
+    node: &'a kdl::KdlNode,
+    index: usize,
+) -> Result<&'a kdl::KdlEntry, KdlDiagnostic> {
+    let mut entries = node.entries().iter();
+    let entry = entries.nth(index).ok_or_else(|| {
+        diag!(
+            node.span(),
+            message =
+                format!("node '{}' requires property at index '{}'", node.name().value(), index)
+        )
+    })?;
+    Ok(entry)
+}
+
 pub fn prop<'a>(node: &'a kdl::KdlNode, key: &str) -> Result<&'a KdlEntry, KdlDiagnostic> {
     let entry = node.entry(key).ok_or_else(|| {
         diag!(
@@ -90,15 +105,7 @@ pub fn prop_at<'a>(
     node: &'a kdl::KdlNode,
     index: usize,
 ) -> Result<(&'a kdl::KdlIdentifier, &'a KdlEntry), KdlDiagnostic> {
-    // let mut entries = node.entries().iter().filter(|e| e.name().is_some());
-    let mut entries = node.entries().iter();
-    let entry = entries.nth(index).ok_or_else(|| {
-        diag!(
-            node.span(),
-            message =
-                format!("node '{}' requires property at index '{}'", node.name().value(), index)
-        )
-    })?;
+    let entry = entry_at(node, index)?;
     match entry.name() {
         None => Err(diag!(
             entry.span(),
@@ -125,15 +132,7 @@ pub fn arg(node: &kdl::KdlNode, index: usize) -> Result<&KdlEntry, KdlDiagnostic
 }
 
 pub fn arg_at<'a>(node: &'a kdl::KdlNode, index: usize) -> Result<&'a KdlEntry, KdlDiagnostic> {
-    // let mut entries = node.entries().iter().filter(|e| e.name().is_some());
-    let mut entries = node.entries().iter();
-    let entry = entries.nth(index).ok_or_else(|| {
-        diag!(
-            node.span(),
-            message =
-                format!("node '{}' requires argument at index '{}'", node.name().value(), index)
-        )
-    })?;
+    let entry = entry_at(node, index)?;
     match entry.name() {
         None => Ok(entry),
         Some(name_id) => Err(diag!(
@@ -156,6 +155,17 @@ pub fn args(node: &kdl::KdlNode) -> Result<impl Iterator<Item = &KdlEntry>, KdlD
         ));
     }
     Ok(entries)
+}
+
+pub fn as_str(entry: &KdlEntry) -> Result<&str, KdlDiagnostic> {
+    match entry.value().as_string() {
+        Some(s) => Ok(s),
+        None => Err(diag!(
+            entry.span(),
+            message =
+                format!("invalid type: {}, expected: {}", inspect_entry_ty_name(entry), "string")
+        )),
+    }
 }
 
 pub trait FromKdlEntry: Sized {
@@ -304,10 +314,7 @@ impl KdlDocumentExt for kdl::KdlNode {
     }
 
     fn get_children<'a>(&'a self) -> impl Iterator<Item = &'a kdl::KdlNode> {
-        match self.children() {
-            None => either::Left(core::iter::empty()),
-            Some(doc) => either::Right(doc.get_children()),
-        }
+        self.iter_children()
     }
 }
 
