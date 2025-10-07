@@ -40,23 +40,12 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Imply `dependencies doctor` and `dotfiles doctor`
+    /// Test if everything is set up correctly
     Doctor,
-    /// Imply `dependencies install` and `dotfiles install`
-    Install,
-    /// Imply `dependencies uninstall` and `dotfiles uninstall`
-    Uninstall,
-    /// Manage dependencies like in package managers
-    Dependencies {
-        #[command(subcommand)]
-        command: NamespaceCommand,
-    },
-    /// Manage dotfiles like symlinks, templates and shell additions
-    Dotfiles {
-        #[command(subcommand)]
-        command: NamespaceCommand,
-    },
-
+    /// Apply the configuration, linking, copying and templating dotfiles
+    Up,
+    /// Undo the configuration, removing links and files created by casa
+    Down,
     /// Generate shell completions
     GenerateCompletions {
         /// Type of completions to generate
@@ -69,31 +58,11 @@ impl Commands {
     fn as_str(&self) -> &'static str {
         match self {
             Commands::Doctor => "doctor",
-            Commands::Install => "install",
-            Commands::Uninstall => "uninstall",
-            Commands::Dependencies { command } => match command {
-                NamespaceCommand::Doctor => "dependencies doctor",
-                NamespaceCommand::Install => "dependencies install",
-                NamespaceCommand::Uninstall => "dependencies uninstall",
-            },
-            Commands::Dotfiles { command } => match command {
-                NamespaceCommand::Doctor => "dotfiles doctor",
-                NamespaceCommand::Install => "dotfiles install",
-                NamespaceCommand::Uninstall => "dotfiles uninstall",
-            },
+            Commands::Up => "up",
+            Commands::Down => "down",
             Commands::GenerateCompletions { .. } => "generate-completions",
         }
     }
-}
-
-#[derive(Subcommand, Debug)]
-pub enum NamespaceCommand {
-    /// Test if everything is set up correctly
-    Doctor,
-    /// Install missing items
-    Install,
-    /// Uninstall items
-    Uninstall,
 }
 
 fn main() -> miette::Result<()> {
@@ -175,39 +144,14 @@ fn trace_dots_error(e: &casa::DotsError) {
 fn execute(command: Commands, dots: &mut Dots) -> Result<(), casa::DotsError> {
     match command {
         Commands::Doctor => {
-            dots.dependencies_doctor()?;
-            dots.dotfiles_doctor()?;
+            dots.doctor()?;
         }
-        Commands::Install => {
-            dots.dependencies_install()?;
-            dots.dotfiles_install()?;
+        Commands::Up => {
+            dots.up()?;
         }
-        Commands::Uninstall => {
-            dots.dependencies_uninstall()?;
-            dots.dotfiles_uninstall()?;
+        Commands::Down => {
+            dots.down()?;
         }
-        Commands::Dependencies { command } => match command {
-            NamespaceCommand::Doctor => {
-                dots.dependencies_doctor()?;
-            }
-            NamespaceCommand::Install => {
-                dots.dependencies_install()?;
-            }
-            NamespaceCommand::Uninstall => {
-                dots.dependencies_uninstall()?;
-            }
-        },
-        Commands::Dotfiles { command } => match command {
-            NamespaceCommand::Doctor => {
-                dots.dotfiles_doctor()?;
-            }
-            NamespaceCommand::Install => {
-                dots.dotfiles_install()?;
-            }
-            NamespaceCommand::Uninstall => {
-                dots.dotfiles_uninstall()?;
-            }
-        },
         _ => { /* handled in main */ }
     }
     Ok(())

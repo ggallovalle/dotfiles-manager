@@ -2,7 +2,6 @@ use crate::{
     diag,
     env::{self, Env},
     impl_from_kdl_entry_for_enum,
-    package_manager::{self, ManagerIdentifier},
 };
 use indexmap::IndexMap;
 use kdl::{KdlDiagnostic, KdlDocument, KdlEntry, KdlNode, KdlValue};
@@ -22,19 +21,12 @@ pub use kdl_helpers::KdlItemRef;
 pub struct Config {
     pub env: Env,
     pub dotfiles_dir: PathBuf,
-    // pub package_managers: IndexMap<ManagerIdentifier, PathBuf>,
     pub bundles: IndexMap<String, Vec<BundleItem>>,
     bundles_envs: IndexMap<String, Env>,
 }
 
 #[derive(Debug, Clone)]
 pub enum BundleItem {
-    // Install {
-    //     name: String,
-    //     manager: Option<ManagerIdentifier>,
-    //     version: Option<semver::VersionReq>,
-    //     span: SourceSpan,
-    // },
     Copy { source: PathBuf, target: PathBuf, span: SourceSpan, recursive: bool },
     Link { source: PathBuf, target: PathBuf, span: SourceSpan, recursive: bool },
     Alias { from: String, to: String, span: SourceSpan },
@@ -69,7 +61,6 @@ pub enum Position {
 
 impl_from_kdl_entry_for_enum!(Shell);
 impl_from_kdl_entry_for_enum!(Position);
-impl_from_kdl_entry_for_enum!(ManagerIdentifier);
 
 impl Config {
     pub fn get_env_for_bundle<T : AsRef<str>>(&self, bundle:T) -> &Env {
@@ -84,34 +75,6 @@ impl Config {
             .and_then(h::arg0)
             .map_err(Into::into)
             .and_then(|entry| env_map.expand_kdl_entry_dir_exists(entry))?;
-
-        // let package_managers_node = document.get_node_required_one("package_managers")?;
-        // let mut package_managers = IndexMap::new();
-        // for manager_entry in h::args(package_managers_node)? {
-        //     let manager = ManagerIdentifier::from_kdl_entry(manager_entry)?;
-        //     match manager.which() {
-        //         Some(path) => {
-        //             if let Some(_) = package_managers.insert(manager.clone(), path) {
-        //                 return Err(diag!(
-        //                     manager_entry.span(),
-        //                     message =
-        //                         format!("package manager '{}' can only be specified once", manager)
-        //                 )
-        //                 .into());
-        //             }
-        //         }
-        //         None => {
-        //             return Err(diag!(
-        //                 manager_entry.span(),
-        //                 message =
-        //                     format!("package manager '{}' not found in PATH", manager.to_string()),
-        //                 help = "ensure the package manager is installed and available in PATH",
-        //                 severity = Severity::Warning
-        //             )
-        //             .into());
-        //         }
-        //     }
-        // }
 
         env_map.apply_exports_to_env(&document)?;
 
@@ -137,33 +100,6 @@ impl Config {
             for bundle_item in bundle.get_children() {
                 let current_env_map = env_for_bundle.as_ref().unwrap_or(&env_map);
                 match bundle_item.name().value() {
-                    // "install" => {
-                    //     let name = h::arg0(bundle_item).and_then(String::from_kdl_entry)?;
-                    //     let manager = bundle_item
-                    //         .entry("pm")
-                    //         .map(ManagerIdentifier::from_kdl_entry_keep)
-                    //         .transpose()?;
-                    //     if let Some((mgr_entry, ref mgr)) = manager
-                    //         && !package_managers.contains_key(mgr)
-                    //     {
-                    //         return Err(ConfigDiagnostic::unknown_variant_reference(
-                    //             mgr_entry,
-                    //             mgr.to_string(),
-                    //             OneOf::from_iter(package_managers.keys()),
-                    //             package_managers_node,
-                    //         ));
-                    //     }
-                    //     let version = bundle_item
-                    //         .entry("version")
-                    //         .map(VersionReq::from_kdl_entry)
-                    //         .transpose()?;
-                    //     items.push(BundleItem::Install {
-                    //         name,
-                    //         manager: manager.map(|(_, m)| m),
-                    //         version,
-                    //         span: bundle_item.span(),
-                    //     });
-                    // }
                     "alias" => {
                         let (key, value) = h::prop0(bundle_item)?;
                         items.push(BundleItem::Alias {
@@ -278,7 +214,6 @@ impl Config {
             bundles.insert(bundle_name, items);
         }
 
-        // Ok(Config { env: env_map, dotfiles_dir, bundles, package_managers })
         Ok(Config { env: env_map, dotfiles_dir, bundles, bundles_envs })
     }
 }

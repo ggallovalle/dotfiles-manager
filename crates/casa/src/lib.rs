@@ -3,7 +3,6 @@
 use crate::{
     config::{BundleItem, Config, ConfigDiagnostic, ConfigError, OneOf},
     file_transfer::FileOp,
-    package_manager::ManagerIdentifier,
 };
 use ignore::{WalkBuilder, WalkState};
 use indexmap::IndexMap;
@@ -21,7 +20,6 @@ mod config;
 mod dir_entry;
 mod env;
 mod file_transfer;
-mod package_manager;
 mod template;
 mod walker;
 
@@ -108,52 +106,11 @@ impl Dots {
         all
     }
 
-    fn log(&mut self, msg: String) -> Result<(), DotsError> {
-        tracing::info!(msg);
+    pub fn doctor(&mut self) -> Result<(), DotsError> {
         Ok(())
     }
 
-    fn install(&mut self, name: &str, manager: &ManagerIdentifier) -> Result<(), DotsError> {
-        tracing::info!("installing {} with {}", name, manager);
-        match manager {
-            ManagerIdentifier::ArchPacman => self.log(format!("pacman -S {}", name))?,
-            ManagerIdentifier::ArchYay => self.log(format!("yay -S {}", name))?,
-            ManagerIdentifier::ArchParu => self.log(format!("paru -S {}", name))?,
-            // ManagerIdentifier::DebianApt => self.log(format!("apt install {}", name))?,
-            // ManagerIdentifier::MacBrew => self.log(format!("brew install {}", name))?,
-            // ManagerIdentifier::WindowsChoco => self.log(format!("choco install {}", name))?,
-            // ManagerIdentifier::WindowsWinget => self.log(format!("winget install {}", name))?,
-            // ManagerIdentifier::RustCargo => self.log(format!("cargo install {}", name))?,
-        }
-        Ok(())
-    }
-
-    pub fn dependencies_doctor(&mut self) -> Result<(), DotsError> {
-        self.log("Checking dependencies...".to_string())?;
-        Ok(())
-    }
-
-    pub fn dependencies_install(&mut self) -> Result<(), DotsError> {
-        self.log("Installing dependencies...".to_string())?;
-
-        self.install("zsh", &ManagerIdentifier::ArchPacman)?;
-        self.install("git", &ManagerIdentifier::ArchPacman)?;
-        // self.install("tealdeer", &PackageManager::RustCargo)?;
-
-        Ok(())
-    }
-
-    pub fn dependencies_uninstall(&mut self) -> Result<(), DotsError> {
-        self.log("Uninstalling dependencies...".to_string())?;
-        Ok(())
-    }
-
-    pub fn dotfiles_doctor(&mut self) -> Result<(), DotsError> {
-        self.log("Checking dotfiles...".to_string())?;
-        Ok(())
-    }
-
-    pub fn dotfiles_install(&mut self) -> Result<(), DotsError> {
+    pub fn up(&mut self) -> Result<(), DotsError> {
         let mut walk_builder = walker::WalkerBuilder::new();
         let mut op_cp = file_transfer::CopyOp::default();
         op_cp.dry_run(self.dry_run);
@@ -229,7 +186,7 @@ impl Dots {
         Ok(())
     }
 
-    pub fn dotfiles_uninstall(&mut self) -> Result<(), DotsError> {
+    pub fn down(&mut self) -> Result<(), DotsError> {
         let mut walk_builder = walker::WalkerBuilder::new();
         let mut op_rm = file_transfer::RemoveOp::default();
         op_rm.dry_run(self.dry_run);
