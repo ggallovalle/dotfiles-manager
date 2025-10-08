@@ -194,10 +194,14 @@ impl Dots {
 
         for (bundle_name, items) in self.public_bundles() {
             for item in items {
-                if let BundleItem::Copy { source, target, span, recursive } = item {
-                    walk_builder.add_source(source, target, (bundle_name, "rm"));
-                } else if let BundleItem::Link { source, target, span, recursive } = item {
-                    walk_builder.add_source(source, target, (bundle_name, "rm"));
+                match item {
+                    BundleItem::Copy { source, target, span } => {
+                        walk_builder.add_source(source, target, (bundle_name, "rm"));
+                    }
+                    BundleItem::Link { source, target, span } => {
+                        walk_builder.add_source(source, target, (bundle_name, "rm"));
+                    }
+                    _ => { /* ignore other items */ }
                 }
             }
         }

@@ -12,9 +12,6 @@ A dotfile manager.
 
 [dependencies]
 dirs-next = "2.0.0"
-which = "8.0.0"
-semver = "1.0"
-
 indexmap = "2.11.1"
 
 kdl = "6.3.4"

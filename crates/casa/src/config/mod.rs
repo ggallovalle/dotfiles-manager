@@ -7,7 +7,6 @@ use indexmap::IndexMap;
 use kdl::{KdlDiagnostic, KdlDocument, KdlEntry, KdlNode, KdlValue};
 use kdl_helpers::{self as h, FromKdlEntry, KdlDocumentExt};
 use miette::{Severity, SourceSpan};
-use semver::{self, VersionReq};
 use std::path::PathBuf;
 use strum::{self, VariantNames};
 
@@ -27,8 +26,8 @@ pub struct Config {
 
 #[derive(Debug, Clone)]
 pub enum BundleItem {
-    Copy { source: PathBuf, target: PathBuf, span: SourceSpan, recursive: bool },
-    Link { source: PathBuf, target: PathBuf, span: SourceSpan, recursive: bool },
+    Copy { source: PathBuf, target: PathBuf, span: SourceSpan },
+    Link { source: PathBuf, target: PathBuf, span: SourceSpan },
     Alias { from: String, to: String, span: SourceSpan },
     Source { snippet: String, position: Position, shell: Shell, span: SourceSpan },
 }
@@ -63,7 +62,7 @@ impl_from_kdl_entry_for_enum!(Shell);
 impl_from_kdl_entry_for_enum!(Position);
 
 impl Config {
-    pub fn get_env_for_bundle<T : AsRef<str>>(&self, bundle:T) -> &Env {
+    pub fn get_env_for_bundle<T: AsRef<str>>(&self, bundle: T) -> &Env {
         self.bundles_envs.get(bundle.as_ref()).unwrap_or(&self.env)
     }
 
@@ -127,12 +126,10 @@ impl Config {
                         //     path.join(&target.value)
                         // };
                         let target_path = PathBuf::from(&target);
-                        let is_recursive = source.is_dir();
                         items.push(BundleItem::Copy {
                             source,
                             target: target_path,
                             span: bundle_item.span(),
-                            recursive: is_recursive,
                         });
                     }
                     "ln" => {
@@ -155,12 +152,10 @@ impl Config {
                         //     path.join(&target.value)
                         // };
                         let target_path = PathBuf::from(&target);
-                        let is_recursive = source.is_dir();
                         items.push(BundleItem::Link {
                             source,
                             target: target_path,
                             span: bundle_item.span(),
-                            recursive: is_recursive,
                         });
                     }
                     "source" => {
@@ -179,18 +174,16 @@ impl Config {
                             span: bundle_item.span(),
                         });
                     }
-                    Env::ENV_NODE => {
-                        match env_for_bundle.as_mut() {
-                            Some(e) => {
-                                e.apply_node(bundle_item)?;
-                            }
-                            None => {
-                                let mut e = env_map.child();
-                                e.apply_node(bundle_item)?;
-                                env_for_bundle = Some(e);
-                            }
+                    Env::ENV_NODE => match env_for_bundle.as_mut() {
+                        Some(e) => {
+                            e.apply_node(bundle_item)?;
                         }
-                    }
+                        None => {
+                            let mut e = env_map.child();
+                            e.apply_node(bundle_item)?;
+                            env_for_bundle = Some(e);
+                        }
+                    },
                     _ => {
                         return Err(ConfigDiagnostic::unknown_variant(
                             bundle_item,
